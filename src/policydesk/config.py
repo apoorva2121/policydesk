@@ -75,6 +75,9 @@ class Settings(BaseSettings):
     max_graph_loops: int = Field(default=2, ge=0, le=5)
     request_timeout_s: float = Field(default=30.0, gt=0, le=300)
     sql_row_limit: int = Field(default=200, ge=1, le=10_000)
+    # Catches CHEAP runaway loops. The spend cap catches expensive ones; a
+    # free tool hammering a database can still take a system down.
+    max_tool_calls_per_run: int = Field(default=12, ge=1, le=200)
 
     # --- Chunking (Milestone 2) ---
     # "section"  : split on the policy's numbered headings -> a chunk is a whole rule
@@ -160,6 +163,7 @@ class Settings(BaseSettings):
             "max_input_chars": self.max_input_chars,
             "sql_row_limit": self.sql_row_limit,
             "max_prompt_tokens": self.max_prompt_tokens,
+            "max_tool_calls_per_run": self.max_tool_calls_per_run,
             "chunk_strategy": self.chunk_strategy,
             "chunk_size_chars": self.chunk_size_chars,
             "chunk_overlap_chars": self.chunk_overlap_chars,

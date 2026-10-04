@@ -55,11 +55,20 @@ class Evidence(BaseModel):
     similarity: float | None = None
 
     def for_prompt(self, number: int) -> str:
+        """Render for a prompt, with the untrusted content clearly fenced.
+
+        The fence is a quality measure, not a security boundary. Its real value is
+        stopping the model losing track of where the retrieved document ended and
+        its own instructions resumed -- which is a far more common failure than a
+        clever attack.
+        """
+        from ..guardrails import fence_untrusted
+
         label = "POLICY" if self.kind == "policy_passage" else "DATA"
         header = f"[{number}] {label} from {self.citation}"
         if self.sql:
             header += f"\n    query: {self.sql}"
-        return f"{header}\n{self.content}"
+        return f"{header}\n{fence_untrusted(self.content, self.citation)}"
 
 
 class PlannedStep(BaseModel):

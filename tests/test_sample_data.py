@@ -17,6 +17,7 @@ def test_all_artefacts_are_created(sample_data: dict[str, Path]) -> None:
     expected = {
         "travel_policy_pdf",
         "approval_policy_pdf",
+        "poisoned_pdf",
         "scanned_receipt_pdf",
         "expense_workbook",
         "sqlite_db",

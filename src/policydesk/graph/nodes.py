@@ -24,6 +24,7 @@ import json
 import re
 from typing import Any
 
+from ..guardrails import CallBudget, RateLimitExceeded, scan_for_injection
 from ..llm.client import LLMClient, LLMError
 from ..tools.base import ToolRegistry
 from .state import AgentState, Evidence, Grade, PendingAction, PlannedStep
@@ -267,7 +268,9 @@ def _evidence_from_result(tool: str, data: dict[str, Any]) -> list[Evidence]:
     return []
 
 
-def gather_node(state: AgentState, *, registry: ToolRegistry) -> AgentState:
+def gather_node(
+    state: AgentState, *, registry: ToolRegistry, budget: CallBudget | None = None
+) -> AgentState:
     """Run the planned tool calls and collect the evidence.
 
     Makes no model call. A tool that fails contributes an error note and the run
@@ -308,6 +311,14 @@ def gather_node(state: AgentState, *, registry: ToolRegistry) -> AgentState:
             trace.append(f"gather: REFUSED {step.tool} {shown} ({message})")
             continue
 
+        if budget is not None:
+            try:
+                budget.take(step.tool)
+            except RateLimitExceeded as exc:
+                errors.append(str(exc))
+                trace.append(f"gather: STOPPED by the call budget ({exc})")
+                break
+
         result = registry.call(step.tool, step.arguments)
         if not result.ok:
             errors.append(f"{step.tool} {shown}: {result.error}")
@@ -315,7 +326,27 @@ def gather_node(state: AgentState, *, registry: ToolRegistry) -> AgentState:
             continue
 
         found = _evidence_from_result(step.tool, result.data)
-        evidence.extend(found)
+
+        # Scan what came BACK, not just what went in. A retrieved document is the
+        # dangerous input in a RAG system: the attacker never talks to you, they
+        # talk to your documents. A hostile passage is dropped from the evidence
+        # and reported, so it can neither influence the answer nor pass unnoticed.
+        kept: list[Evidence] = []
+        for item in found:
+            report = scan_for_injection(item.content)
+            if report.hostile:
+                message = (
+                    f"a retrieved passage from {item.citation} was DROPPED: {report.summary()}"
+                )
+                errors.append(message)
+                trace.append(f"gather: QUARANTINED {item.citation} ({report.summary()})")
+                continue
+            if report.suspicious:
+                errors.append(f"{item.citation} looks odd: {report.summary()}")
+                trace.append(f"gather: flagged {item.citation} ({report.summary()})")
+            kept.append(item)
+
+        evidence.extend(kept)
         note = f"gather: {step.tool} -> {result.summary}"
         if suspicious := result.data.get("suspicious"):
             # Carried into the trace AND the errors, so the grader sees the doubt.

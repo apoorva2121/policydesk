@@ -47,6 +47,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 
 from ..config import Settings
+from ..guardrails import CallBudget
 from ..llm.client import LLMClient
 from ..tools.base import ToolRegistry
 from .nodes import (
@@ -176,7 +177,10 @@ def build_graph(
         "guard_input", lambda state: guard_input_node(state, max_chars=settings.max_input_chars)
     )
     graph.add_node("plan", increment_then_plan)
-    graph.add_node("gather", lambda state: gather_node(state, registry=registry))
+    # One budget object for the whole run, so the cap is across every attempt
+    # rather than per attempt -- otherwise three attempts triple the limit.
+    budget = CallBudget(max_calls=settings.max_tool_calls_per_run)
+    graph.add_node("gather", lambda state: gather_node(state, registry=registry, budget=budget))
     graph.add_node(
         "grade",
         lambda state: grade_node(state, llm=llm, max_attempts=settings.max_graph_loops + 1),
