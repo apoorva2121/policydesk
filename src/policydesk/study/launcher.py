@@ -6,11 +6,16 @@ The desktop icon used to open the tutor and nothing else, so the two Streamlit
 apps had to be started by hand in two more terminals. That is three things to
 remember before you can study, which is three chances to not bother.
 
-So the icon now opens everything: the study interface, the app itself, and the
+So the icon now starts everything: the study interface, the app itself, and the
 tutor in the window you clicked.
 
-The three rules this module follows
-----------------------------------
+Two servers, one tab
+--------------------
+Both servers start, but only ONE browser tab is opened. Opening two produced the
+bug this module was then rewritten for -- see `start_study_apps`.
+
+The four rules this module follows
+---------------------------------
 1. **Reuse a port that is already serving.** Double-clicking the icon twice, or
    having run `policydesk study` earlier, must not fail and must not start a
    second copy. If something is already answering on the port, we use it.
@@ -20,27 +25,56 @@ The three rules this module follows
    not create would be a surprising thing for a learning tool to do.
 
 3. **A web app that will not start must not block the tutor.** The tutor is the
-   point; the browser tabs are a convenience. A failure here is printed, with the
+   point; the browser tab is a convenience. A failure here is printed, with the
    log path, and then we carry on -- never swallowed, never fatal.
+
+4. **Never depend on the browser having cooperated.** Handing a URL to the shell is
+   a request, not a guarantee, so every address is printed as well.
 """
 
 from __future__ import annotations
 
+import os
 import socket
 import subprocess
 import sys
 import time
 import webbrowser
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
+
+
+def _timestamp() -> str:
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 LOG_DIR = PROJECT_ROOT / "logs"
+
+# How the study app learns where the app itself is listening. Only the launcher
+# knows the port, and only at launch, so it is passed down rather than guessed.
+# Absent (running `policydesk study` on its own) the link is simply not shown --
+# a link to a port with nothing behind it is worse than no link.
+APP_URL_ENV = "POLICYDESK_APP_URL"
 
 # How long to wait for Streamlit to answer before giving up on it. Streamlit's
 # first start is the slow one: it imports torch-sized dependency trees and builds
 # its static assets cache.
 STARTUP_TIMEOUT_S = 60.0
+
+# Gap between opening one tab and the next.
+#
+# Not cosmetic. On Windows `webbrowser` is `WindowsDefault`, which is `os.startfile`
+# -- it hands the URL to the shell and returns immediately, having no idea whether a
+# browser exists yet. Two of those back to back, with the browser still cold
+# starting, and the second URL lands on a window that is not ready for it: the
+# reported symptom was two tabs showing the SAME app, and no study tool anywhere.
+#
+# So the tabs are opened one at a time with a real gap, and the URLs are printed as
+# well, because a browser handoff is a request and never a guarantee.
+BROWSER_OPEN_GAP_S = 3.0
 
 
 def port_is_serving(port: int, host: str = "127.0.0.1") -> bool:
@@ -87,7 +121,9 @@ class AppProcess:
         return self.process is not None
 
 
-def start_app(name: str, script: Path, port: int) -> AppProcess:
+def start_app(
+    name: str, script: Path, port: int, extra_env: dict[str, str] | None = None
+) -> AppProcess:
     """Start one Streamlit app, or adopt the one already on that port."""
     url = f"http://localhost:{port}"
 
@@ -100,7 +136,15 @@ def start_app(name: str, script: Path, port: int) -> AppProcess:
     # Streamlit's own output goes to a file rather than into the tutor's window,
     # where it would scroll the lesson away. The path is printed, so a failure is
     # still followable -- the output is redirected, not discarded.
-    handle = log_path.open("wb")
+    #
+    # APPENDED, with a header per launch. It was opened "wb" first, which truncates:
+    # the next launch destroyed the log of the launch that had gone wrong, which was
+    # noticed while trying to diagnose exactly such a launch. A log you overwrite
+    # before reading is not a log.
+    handle = log_path.open("ab")
+    handle.write(f"\n===== launch {_timestamp()} :: {name} on port {port} =====\n".encode())
+    handle.flush()
+
     process = subprocess.Popen(
         [
             sys.executable,
@@ -120,6 +164,7 @@ def start_app(name: str, script: Path, port: int) -> AppProcess:
         cwd=str(PROJECT_ROOT),
         stdout=handle,
         stderr=subprocess.STDOUT,
+        env={**os.environ, **(extra_env or {})},
     )
     return AppProcess(name=name, port=port, url=url, process=process, log_path=log_path)
 
@@ -150,19 +195,78 @@ class LaunchReport:
 
     apps: list[AppProcess] = field(default_factory=list)
     failures: list[str] = field(default_factory=list)
+    opened: list[str] = field(default_factory=list)
 
 
-def start_study_apps(ui_port: int = 8501, study_port: int = 8502) -> LaunchReport:
-    """Start the study interface and the app itself, and open both in a browser."""
+def open_in_browser(
+    apps: list[AppProcess],
+    gap: float = BROWSER_OPEN_GAP_S,
+    opener: Callable[[str], object] = webbrowser.open,
+    sleeper: Callable[[float], object] = time.sleep,
+) -> list[str]:
+    """Open each app in its own tab, one at a time. Returns the URLs attempted.
+
+    Only used when both tabs are explicitly asked for; the default opens one. See
+    `start_study_apps` for why.
+    """
+    opened: list[str] = []
+    for index, app in enumerate(apps):
+        if not port_is_serving(app.port):
+            continue
+        if index > 0:
+            sleeper(gap)  # see BROWSER_OPEN_GAP_S
+        opener(app.url)
+        opened.append(app.url)
+    return opened
+
+
+def browser_targets(apps: list[AppProcess], open_all: bool = False) -> list[AppProcess]:
+    """Which apps get a browser tab. By default, only the first: the study tool.
+
+    Pulled out as its own function so the decision can be tested without starting
+    two Streamlit servers to find out.
+    """
+    return apps if open_all else apps[:1]
+
+
+def start_study_apps(
+    ui_port: int = 8501,
+    study_port: int = 8502,
+    open_browser: bool = True,
+    open_all: bool = False,
+) -> LaunchReport:
+    """Start the study interface and the app itself; open ONE browser tab.
+
+    Why one tab, when two apps are started
+    --------------------------------------
+    Both servers run -- that part is wanted. But opening two tabs produced the
+    reported failure: three windows, two of them showing the same app, and the
+    study tool nowhere. The cause is that `webbrowser` on Windows is `os.startfile`,
+    which hands a URL to the shell and returns immediately; fire two at a cold
+    starting browser and the second can land on a window that is not ready for it.
+
+    A gap between them makes that less likely. It does not make it impossible, and
+    "less likely" is not a fix for something you meet every single time you sit
+    down to study. So the default opens exactly ONE tab -- the study tool, which is
+    what you came for -- and the app itself is one click away from inside it, plus
+    printed in the terminal. One open cannot race with anything.
+
+    `open_all=True` restores both tabs for anyone who prefers them.
+    """
     package = Path(__file__).resolve().parent.parent
     wanted = [
         ("study-ui", package / "study" / "app.py", study_port),
         ("app-ui", package / "ui.py", ui_port),
     ]
 
+    # The study app shows a link to the app itself, so one tab is enough. Passed by
+    # environment because the port is only known here, at launch.
+    app_url = f"http://localhost:{ui_port}"
+
     report = LaunchReport()
     for name, script, port in wanted:
-        app = start_app(name, script, port)
+        extra_env = {APP_URL_ENV: app_url} if name == "study-ui" else None
+        app = start_app(name, script, port, extra_env=extra_env)
         report.apps.append(app)
 
         if app.reused:
@@ -176,9 +280,8 @@ def start_study_apps(ui_port: int = 8501, study_port: int = 8502) -> LaunchRepor
             report.failures.append(detail)
             continue
 
-    for app in report.apps:
-        if port_is_serving(app.port):
-            webbrowser.open(app.url)
+    if open_browser:
+        report.opened = open_in_browser(browser_targets(report.apps, open_all=open_all))
 
     return report
 

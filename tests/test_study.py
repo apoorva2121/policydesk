@@ -11,6 +11,7 @@ and the suite tells you which lesson to update.
 
 from __future__ import annotations
 
+import socket
 from pathlib import Path
 
 import pytest
@@ -668,8 +669,6 @@ def test_an_already_running_app_is_reused_and_never_stopped() -> None:
     An app we merely borrowed is still running after the tutor closes -- a learning
     tool terminating a server it did not start would be a genuinely bad surprise.
     """
-    import socket
-
     from policydesk.study.launcher import AppProcess, start_app, stop_app
 
     # A real listening socket, so `port_is_serving` is answering about something
@@ -725,3 +724,124 @@ def test_the_desktop_launcher_starts_everything_not_only_the_tutor() -> None:
     assert "learn --with-apps" in LAUNCHER_TEMPLATE, (
         "the desktop icon must start the web apps too, not just the tutor"
     )
+
+
+def test_browser_tabs_are_opened_one_at_a_time_study_tool_first() -> None:
+    """The reported failure: three screens, two of them the same app, no study tool.
+
+    On Windows `webbrowser` is `WindowsDefault`, which is `os.startfile` -- it hands
+    the URL to the shell and returns at once, knowing nothing about whether a browser
+    exists yet. Two of those back to back, while the browser is still cold starting,
+    and the second URL lands on a window that is not ready for it.
+
+    So: a real gap between opens, and the study tool first, so that if the browser
+    honours only one of them it is the one you came for.
+    """
+    from policydesk.study.launcher import AppProcess, open_in_browser
+
+    # Two real listening sockets, so `port_is_serving` is answering about something
+    # true rather than about a mock.
+    listeners = []
+    apps = []
+    try:
+        for name in ("study-ui", "app-ui"):
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.bind(("127.0.0.1", 0))
+            sock.listen(1)
+            listeners.append(sock)
+            port = sock.getsockname()[1]
+            apps.append(AppProcess(name=name, port=port, url=f"http://localhost:{port}"))
+
+        opened: list[str] = []
+        slept: list[float] = []
+        open_in_browser(apps, gap=2.5, opener=opened.append, sleeper=slept.append)
+
+        assert opened == [apps[0].url, apps[1].url], "study tool must be opened first"
+        assert slept == [2.5], (
+            "exactly one gap, between the two opens -- no gap before the first "
+            "(pointless delay) and none after the last"
+        )
+    finally:
+        for sock in listeners:
+            sock.close()
+
+
+def test_the_launcher_log_is_appended_not_overwritten(tmp_path: Path) -> None:
+    """A log you overwrite before reading is not a log.
+
+    It was opened "wb", which truncates. The next launch therefore destroyed the log
+    of the launch that had gone wrong -- noticed while trying to diagnose exactly
+    such a launch, with the evidence already gone.
+    """
+    from policydesk.study import launcher
+
+    original = launcher.LOG_DIR
+    launcher.LOG_DIR = tmp_path / "logs"
+    started = []
+    try:
+        # A trivial script on ports nothing is using. We care about the log file's
+        # mode, not about Streamlit -- so the servers are stopped, not waited for.
+        script = tmp_path / "noop.py"
+        script.write_text("", encoding="utf-8")
+
+        for port in (59_401, 59_402):
+            app = launcher.start_app("probe", script, port)
+            started.append(app)
+
+        log_path = started[0].log_path
+        assert log_path is not None
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+        assert text.count("===== launch") == 2, (
+            "the second launch truncated the first one's log instead of appending"
+        )
+    finally:
+        for app in started:
+            launcher.stop_app(app)
+        launcher.LOG_DIR = original
+
+
+def test_only_the_study_tool_gets_a_tab_by_default() -> None:
+    """The fix for "3 screens open with same ui, I dont see the guided code thing".
+
+    Two servers still start -- that part was wanted. But two browser tabs is where it
+    went wrong: `webbrowser` on Windows is `os.startfile`, which hands a URL to the
+    shell and returns without knowing whether a browser exists yet. Fire two at a
+    cold-starting browser and the second can land on a window that is not ready,
+    which is how two tabs ended up showing the same app and the study tool appeared
+    nowhere.
+
+    A delay between opens makes that less likely. "Less likely" is not a fix for
+    something met every time you sit down to study, so the default opens exactly ONE
+    tab -- and one open cannot race with anything. The app itself is linked from
+    inside the study tool.
+    """
+    from policydesk.study.launcher import AppProcess, browser_targets
+
+    study = AppProcess(name="study-ui", port=8502, url="http://localhost:8502")
+    app = AppProcess(name="app-ui", port=8501, url="http://localhost:8501")
+
+    assert browser_targets([study, app]) == [study], (
+        "only the study tool should be opened, and it must be the study tool"
+    )
+    assert browser_targets([study, app], open_all=True) == [study, app]
+
+
+def test_the_study_page_links_to_the_app_so_one_tab_is_enough() -> None:
+    """One tab is only enough if the app itself is reachable from it.
+
+    The port is known only to the launcher, and only at launch, so it is passed down
+    by environment variable. When it is absent -- someone running `policydesk study`
+    on its own -- no link is shown, because a link to a port with nothing behind it
+    is worse than no link at all.
+    """
+    from policydesk.study.launcher import APP_URL_ENV
+
+    assert APP_URL_ENV == "POLICYDESK_APP_URL"
+
+    source = Path("src/policydesk/study/app.py").read_text(encoding="utf-8")
+
+    assert "os.environ.get(launcher.APP_URL_ENV)" in source, (
+        "the study page must read the app URL from the launcher, not hardcode a port"
+    )
+    assert "The app itself" in source, "the link needs a label a human can recognise"
+    assert "if app_url:" in source, "no link when the URL is unknown"

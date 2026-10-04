@@ -26,11 +26,13 @@ repeats free too.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from typing import Any
 
 from policydesk.config import Settings, get_settings
+from policydesk.study import launcher
 from policydesk.study import progress as progress_store
 from policydesk.study.content import DRILL, SESSIONS, TOUR, drill_groups, tour_groups
 from policydesk.study.progress import StudyProgress
@@ -539,6 +541,19 @@ def run() -> None:
         )
 
         st.divider()
+
+        # A link rather than a second browser tab opened for you.
+        #
+        # The launcher used to open two tabs, and on Windows the second URL handoff
+        # can land on a browser window that is not ready for it: the reported result
+        # was two tabs of the SAME app and no study tool at all. One tab cannot race
+        # with anything, so the app itself is a click from here instead.
+        app_url = os.environ.get(launcher.APP_URL_ENV)
+        if app_url:
+            st.markdown(f"**The app itself** → [{app_url}]({app_url})")
+            st.caption("Opens in a new tab. Ask it questions and watch it work.")
+            st.divider()
+
         st.caption(f"Progress saved to `{progress_store.progress_path(settings).name}`")
         st.caption("Buttons run the **real** CLI. Code shown is read from the **real** files.")
 

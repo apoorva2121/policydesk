@@ -8,7 +8,7 @@ Three artefacts, all inside the project so they are reproducible:
    A generated icon has no licence question attached to it and cannot rot.
 2. `scripts/Learn PolicyDesk.cmd` — a launcher that finds the project's own virtual
    environment and runs the tutor in a window that **stays open**, having first
-   started the study interface and the app itself in a browser.
+   started the study interface and the app itself and opened the study tool.
 3. A Windows shortcut (`.lnk`) on the Desktop, pointing at the launcher, with the
    icon attached.
 
@@ -103,14 +103,14 @@ if not exist "{python}" (
 )
 
 REM `--with-apps` is what makes one click enough: it starts the study interface and
-REM the app itself, opens both in a browser, and runs the tutor here. Anything you
-REM already had running on those ports is reused and left alone afterwards.
+REM the app itself, opens the STUDY TOOL in one browser tab (the app is linked from
+REM its sidebar), and runs the tutor here. Anything already running on those ports is
+REM reused and left alone.
 "{python}" -m policydesk.cli learn --with-apps
 
 echo.
 echo  ------------------------------------------------------------------
-echo   The tutor has closed. Your progress is saved, and the web apps this
-echo   window started have been stopped.
+echo   The tutor has closed. Your progress is saved.
 echo   Run it again from this icon, or: policydesk learn --with-apps
 echo   Just the tutor, no browser tabs:  policydesk learn
 echo  ------------------------------------------------------------------

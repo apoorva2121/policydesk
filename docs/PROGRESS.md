@@ -621,7 +621,7 @@ Fixed: `eval-runs/` now sits beside `data/`, not inside it, and is committed to 
 The results are small JSON files, they are the history of every quality decision on
 the project, and they are now in version control where that history belongs.
 
-### The fifteen bugs, as a list
+### The eighteen bugs, as a list
 
 Every one was found by running the system or by a test, not by reading code. They
 are the most valuable thing in this repository.
@@ -643,9 +643,38 @@ are the most valuable thing in this repository.
 | 13 | Streamlit lost the answer the moment Approve was pressed, because it was drawn inside the click handler | Draw from stored state; the framework re-runs the whole script on every interaction |
 | 14 | The run fingerprint omitted the retrieval floor, so `eval-compare` called a real change "IDENTICAL CONFIGURATION" | A fingerprint must cover everything that changes behaviour, not everything that lives in `.env` |
 | 15 | Re-running the eval to check a result replayed it from cache and "confirmed" it | A replay cannot disagree with the run it replays |
+| 16 | **Opening two browser tabs gave two tabs of the SAME app and no study tool** | `os.startfile` hands a URL to the shell and returns; it is a request, not a guarantee |
+| 17 | The launcher log was opened `wb`, so each launch destroyed the previous one's log | A log you overwrite before reading is not a log |
+| 18 | Quitting the tutor killed the study page still open in the browser | When both answers are reasonable, ask instead of guessing |
 
 Plus two design corrections: the injection scan was in the agent rather than the
 tool (so MCP bypassed it), and evaluation results were stored as regenerable state.
+
+### Finding 16 in full: two tabs, one app, no study tool
+
+Reported as: *"3 screens open with same ui, I dont see the guided code thing at all."*
+
+The servers were fine. Checked first, before changing anything: port 8502 rendered
+"Study PolicyDesk" with the Guided path, 8501 rendered the main app. So the apps were
+correct and the fault was in how the tabs were opened.
+
+`webbrowser` on Windows resolves to `WindowsDefault`, which is `os.startfile`: it
+hands the URL to the shell and returns immediately, knowing nothing about whether a
+browser exists yet. Two of those back to back, at a cold-starting browser, and the
+second URL lands on a window not ready for it. With the terminal window, that is the
+three screens -- two of them the same page.
+
+The first fix was a 3-second gap between opens. That makes it *less likely*, and less
+likely is not a fix for something met every time you sit down to study. So the default
+now opens exactly **one** tab -- the study tool -- and the app itself is a link in its
+sidebar, passed down by environment variable because only the launcher knows the port.
+One open cannot race with anything. `--open-both` restores the old behaviour.
+
+Two smaller bugs fell out of diagnosing it. The launcher log was opened `"wb"`, so the
+next launch truncated the log of the launch that had gone wrong -- discovered while
+looking for exactly that evidence, already gone. And stopping the servers on exit
+killed the study page still open in the browser, so it now asks, defaulting to stop
+and surviving a non-interactive run where `input` raises `EOFError`.
 
 ### Finding 12 in full: the quarantine that was never reached
 

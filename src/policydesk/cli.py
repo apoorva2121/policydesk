@@ -1033,12 +1033,20 @@ def cmd_study(port: int) -> int:
 # ---------------------------------------------------------------------------
 
 
-def cmd_learn(with_apps: bool = False, ui_port: int = 8501, study_port: int = 8502) -> int:
+def cmd_learn(
+    with_apps: bool = False,
+    ui_port: int = 8501,
+    study_port: int = 8502,
+    open_browser: bool = True,
+    open_all: bool = False,
+) -> int:
     """Run the step-by-step tutor in this terminal.
 
-    With `--with-apps` it also starts the study interface and the app itself and
-    opens both in a browser, which is what the desktop icon uses: one click should
-    give you everything, not one of three things.
+    With `--with-apps` it also starts the study interface and the app itself, and
+    opens the study tool in a browser -- which is what the desktop icon uses: one
+    click should give you everything, not one of three things.
+
+    One tab, not two, even though two servers start. See `start_study_apps`.
     """
     settings = _load_settings_or_explain()
     if settings is None:
@@ -1052,28 +1060,74 @@ def cmd_learn(with_apps: bool = False, ui_port: int = 8501, study_port: int = 85
     from .study.launcher import port_is_serving, start_study_apps, stop_study_apps
 
     print("Starting the two web apps...")
-    report = start_study_apps(ui_port=ui_port, study_port=study_port)
+    report = start_study_apps(
+        ui_port=ui_port,
+        study_port=study_port,
+        open_browser=open_browser,
+        open_all=open_all,
+    )
 
+    # Labelled, and printed whether or not the browser cooperated. Handing a URL to
+    # the shell is a request, not a guarantee -- and when two tabs opened onto the
+    # same app there was nothing on screen saying which address was which.
+    labels = {
+        "study-ui": "STUDY TOOL  (start here: Guided path, Code tour, Drill)",
+        "app-ui": "THE APP ITSELF (ask it questions, watch it work)",
+    }
+    print()
     for app in report.apps:
         if not port_is_serving(app.port):
             continue  # its failure is reported below
-        note = "  (already running -- left as it was)" if app.reused else ""
-        print(f"  {app.name:<10} {app.url}{note}")
+        note = "   [was already running; left alone]" if app.reused else ""
+        print(f"  {app.url}   {labels.get(app.name, app.name)}{note}")
 
     for failure in report.failures:
         # Printed, not raised: the tutor is the point and must still open.
         print(f"  COULD NOT START: {failure}")
 
     print()
+    if not report.opened and not report.failures:
+        print("  No tab was opened -- open the addresses above yourself.")
+    elif len(report.opened) == 1:
+        print(f"  Opened one tab: {report.opened[0]}")
+        print("  The app itself is linked in that page's sidebar, so one tab is enough.")
+    elif len(report.opened) > 1:
+        print(f"  Opened {len(report.opened)} tabs. If two show the same page, the browser")
+        print("  mishandled it -- open the addresses above manually; both servers are up.")
+
+    print()
     try:
         return run(settings)
     finally:
-        # Only the ones we started; anything reused keeps running.
-        started = [app.name for app in report.apps if app.ours]
-        if started:
+        # Only the ones we started; anything reused keeps running regardless.
+        started = [app for app in report.apps if app.ours]
+        if started and _keep_apps_running():
             print()
-            print(f"Stopping the web apps this window started: {', '.join(started)}")
-        stop_study_apps(report)
+            print("Left running. The addresses above still work.")
+            print("Close them later by closing this window, or with Ctrl+C in it.")
+        elif started:
+            print()
+            print(f"Stopped: {', '.join(app.name for app in started)}")
+            stop_study_apps(report)
+
+
+def _keep_apps_running() -> bool:
+    """Ask whether to leave the web apps up after the tutor closes.
+
+    Asked rather than assumed, because both answers are reasonable and guessing
+    wrong is irritating either way: stopping them kills the study page you may still
+    be reading, and leaving them up strands servers you did not ask for.
+
+    Defaults to stopping, including when there is no terminal to ask (piped input,
+    CI), where `input` raises EOFError. A prompt that crashes a non-interactive run
+    would be a worse bug than the one it is solving.
+    """
+    print()
+    try:
+        answer = input("Leave the web apps running so you can keep reading? [y/N] ")
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return answer.strip().lower() in {"y", "yes"}
 
 
 def cmd_install_shortcut() -> int:
@@ -1202,6 +1256,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     learn_parser.add_argument("--ui-port", type=int, default=8501)
     learn_parser.add_argument("--study-port", type=int, default=8502)
+    learn_parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="start the apps but do not open browser tabs; the addresses are printed",
+    )
+    learn_parser.add_argument(
+        "--open-both",
+        action="store_true",
+        help="open a tab for the app itself too, instead of only the study tool",
+    )
     sub.add_parser("install-shortcut", help="create a desktop icon that opens the tutor")
 
     args = parser.parse_args(argv)
@@ -1253,7 +1317,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "study":
         return cmd_study(args.port)
     if args.command == "learn":
-        return cmd_learn(with_apps=args.with_apps, ui_port=args.ui_port, study_port=args.study_port)
+        return cmd_learn(
+            with_apps=args.with_apps,
+            ui_port=args.ui_port,
+            study_port=args.study_port,
+            open_browser=not args.no_browser,
+            open_all=args.open_both,
+        )
     if args.command == "install-shortcut":
         return cmd_install_shortcut()
 

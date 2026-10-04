@@ -113,9 +113,17 @@ Four ways in, sharing one curriculum and one progress file:
 ```
 
 **The desktop icon is the one-click route.** It starts the study interface and the
-app itself, opens both in a browser, and runs the tutor in the window you clicked.
-Anything already listening on those ports is reused and left running afterwards; only
-what that window started gets stopped when you close it.
+app itself, opens the **study tool** in one browser tab, and runs the tutor in the
+window you clicked. The app itself is linked from the study page's sidebar.
+
+One tab, though two servers start, and deliberately so: opening two tabs at once
+produced two tabs showing the *same* app and no study tool, because Windows hands a
+URL to the shell without waiting for the browser to be ready. One open cannot race
+with anything. `--open-both` restores the second tab if you prefer it.
+
+Anything already listening on those ports is reused and left alone. When you quit the
+tutor it asks whether to leave the web apps running, so closing the tutor does not
+kill the page you were reading.
 
 The tutor prints the **real source** with the **exact file and line** to open, asks
 you to write an answer before showing you the right one, and offers to run the real
