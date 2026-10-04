@@ -36,3 +36,6 @@ Thumbs.db
 
 # Playwright MCP snapshot output from browser-driven review sessions.
 .playwright-mcp/
+
+# Streamlit output from the one-click launcher.
+logs/

@@ -952,6 +952,8 @@ def run(settings: Settings) -> int:
         f"{S.green}  Progress saved: {done}/{steps} guided steps, "
         f"{progress.completed_tour([i.key for i in TOUR])}/{len(TOUR)} files.{S.reset}"
     )
-    print(f"{S.dim}  Come back any time with:  policydesk learn{S.reset}")
+    print(
+        f"{S.dim}  Come back any time: the desktop icon, or policydesk learn --with-apps{S.reset}"
+    )
     rule("=")
     return 0

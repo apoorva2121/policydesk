@@ -21,12 +21,17 @@ if not exist "C:\dev\agentic learning\.venv\Scripts\python.exe" (
     exit /b 1
 )
 
-"C:\dev\agentic learning\.venv\Scripts\python.exe" -m policydesk.cli learn
+REM `--with-apps` is what makes one click enough: it starts the study interface and
+REM the app itself, opens both in a browser, and runs the tutor here. Anything you
+REM already had running on those ports is reused and left alone afterwards.
+"C:\dev\agentic learning\.venv\Scripts\python.exe" -m policydesk.cli learn --with-apps
 
 echo.
 echo  ------------------------------------------------------------------
-echo   The tutor has closed. Your progress is saved.
-echo   Run it again any time from this icon, or with: policydesk learn
+echo   The tutor has closed. Your progress is saved, and the web apps this
+echo   window started have been stopped.
+echo   Run it again from this icon, or: policydesk learn --with-apps
+echo   Just the tutor, no browser tabs:  policydesk learn
 echo  ------------------------------------------------------------------
 echo.
 pause

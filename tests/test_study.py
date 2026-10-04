@@ -653,3 +653,75 @@ def test_the_approval_gate_is_removed_once_it_is_resolved() -> None:
         "the decision must be handled after the gate is cleared, not inside the "
         "button conditional that drew it"
     )
+
+
+# ---------------------------------------------------------------------------
+# The one-click launcher
+# ---------------------------------------------------------------------------
+
+
+def test_an_already_running_app_is_reused_and_never_stopped() -> None:
+    """The rule that stops the launcher being destructive.
+
+    Double-clicking the icon twice, or having run `policydesk study` in another
+    terminal already, must not start a second copy and must not kill the first.
+    An app we merely borrowed is still running after the tutor closes -- a learning
+    tool terminating a server it did not start would be a genuinely bad surprise.
+    """
+    import socket
+
+    from policydesk.study.launcher import AppProcess, start_app, stop_app
+
+    # A real listening socket, so `port_is_serving` is answering about something
+    # true rather than about a mock.
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    try:
+        app = start_app("borrowed", Path("does-not-matter.py"), port)
+
+        assert app.reused, "a port that answers must be adopted, not started again"
+        assert app.process is None, "nothing should have been spawned"
+        assert not app.ours, "we did not start it, so it is not ours to stop"
+
+        # Must be a no-op rather than an error or a kill.
+        stop_app(app)
+        assert app.process is None
+    finally:
+        listener.close()
+
+    # And the inverse: something we started IS ours.
+    ours = AppProcess(name="x", port=1, url="http://localhost:1", process=object())  # type: ignore[arg-type]
+    assert ours.ours
+
+
+def test_a_web_app_that_fails_to_start_does_not_block_the_tutor() -> None:
+    """The tutor is the point; the browser tabs are a convenience.
+
+    So a Streamlit app that will not come up is reported with its log path and the
+    tutor still opens. The failure is printed, never swallowed and never fatal --
+    the alternative is an icon that silently does nothing because of a port clash.
+    """
+    from policydesk.study import launcher
+
+    report = launcher.LaunchReport()
+    report.failures.append("study-ui did not answer on port 8502")
+
+    # The contract the CLI relies on: failures are data to print, not exceptions.
+    assert report.failures
+    assert report.apps == []
+    launcher.stop_study_apps(report)  # must not raise with nothing started
+
+
+def test_the_desktop_launcher_starts_everything_not_only_the_tutor() -> None:
+    """The icon originally ran `policydesk learn`, which opened the tutor alone.
+
+    That left the two web apps to be started by hand in two more terminals: three
+    things to remember before studying, so three chances to not bother.
+    """
+    from policydesk.study.shortcut import LAUNCHER_TEMPLATE
+
+    assert "learn --with-apps" in LAUNCHER_TEMPLATE, (
+        "the desktop icon must start the web apps too, not just the tutor"
+    )

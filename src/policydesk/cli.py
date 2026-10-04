@@ -1033,15 +1033,47 @@ def cmd_study(port: int) -> int:
 # ---------------------------------------------------------------------------
 
 
-def cmd_learn() -> int:
-    """Run the step-by-step tutor in this terminal."""
+def cmd_learn(with_apps: bool = False, ui_port: int = 8501, study_port: int = 8502) -> int:
+    """Run the step-by-step tutor in this terminal.
+
+    With `--with-apps` it also starts the study interface and the app itself and
+    opens both in a browser, which is what the desktop icon uses: one click should
+    give you everything, not one of three things.
+    """
     settings = _load_settings_or_explain()
     if settings is None:
         return 1
 
     from .study.tutor import run
 
-    return run(settings)
+    if not with_apps:
+        return run(settings)
+
+    from .study.launcher import port_is_serving, start_study_apps, stop_study_apps
+
+    print("Starting the two web apps...")
+    report = start_study_apps(ui_port=ui_port, study_port=study_port)
+
+    for app in report.apps:
+        if not port_is_serving(app.port):
+            continue  # its failure is reported below
+        note = "  (already running -- left as it was)" if app.reused else ""
+        print(f"  {app.name:<10} {app.url}{note}")
+
+    for failure in report.failures:
+        # Printed, not raised: the tutor is the point and must still open.
+        print(f"  COULD NOT START: {failure}")
+
+    print()
+    try:
+        return run(settings)
+    finally:
+        # Only the ones we started; anything reused keeps running.
+        started = [app.name for app in report.apps if app.ours]
+        if started:
+            print()
+            print(f"Stopping the web apps this window started: {', '.join(started)}")
+        stop_study_apps(report)
 
 
 def cmd_install_shortcut() -> int:
@@ -1162,7 +1194,14 @@ def main(argv: list[str] | None = None) -> int:
     ui_parser.add_argument("--port", type=int, default=8501)
     study_parser = sub.add_parser("study", help="run the interactive study interface")
     study_parser.add_argument("--port", type=int, default=8502)
-    sub.add_parser("learn", help="step-by-step tutor in this terminal")
+    learn_parser = sub.add_parser("learn", help="step-by-step tutor in this terminal")
+    learn_parser.add_argument(
+        "--with-apps",
+        action="store_true",
+        help="also start the study interface and the app itself, and open both in a browser",
+    )
+    learn_parser.add_argument("--ui-port", type=int, default=8501)
+    learn_parser.add_argument("--study-port", type=int, default=8502)
     sub.add_parser("install-shortcut", help="create a desktop icon that opens the tutor")
 
     args = parser.parse_args(argv)
@@ -1214,7 +1253,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "study":
         return cmd_study(args.port)
     if args.command == "learn":
-        return cmd_learn()
+        return cmd_learn(with_apps=args.with_apps, ui_port=args.ui_port, study_port=args.study_port)
     if args.command == "install-shortcut":
         return cmd_install_shortcut()
 

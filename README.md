@@ -74,7 +74,7 @@ model work, including the entire test suite.
 | `ui` | the Streamlit interface |
 | `learn` | **step-by-step tutor in this terminal**, with file:line citations |
 | `study` | the same curriculum in a browser |
-| `install-shortcut` | put a desktop icon on your Desktop that opens the tutor |
+| `install-shortcut` | a desktop icon that opens both web apps **and** the tutor |
 | `cache-clear` | delete cached model responses |
 | `langfuse-setup` | how to run Langfuse locally, and whether it is reachable |
 
@@ -103,13 +103,19 @@ and measuring it cost 8 cents to disprove.
 
 ## Learning it
 
-Three ways in, sharing one curriculum and one progress file:
+Four ways in, sharing one curriculum and one progress file:
 
 ```powershell
-.venv\Scripts\python.exe -m policydesk.cli install-shortcut   # a desktop icon
-.venv\Scripts\python.exe -m policydesk.cli learn              # the terminal tutor
-.venv\Scripts\python.exe -m policydesk.cli study              # the same, in a browser
+.venv\Scripts\python.exe -m policydesk.cli install-shortcut   # a desktop icon: everything
+.venv\Scripts\python.exe -m policydesk.cli learn --with-apps  # the same, from a terminal
+.venv\Scripts\python.exe -m policydesk.cli learn              # the tutor alone, no tabs
+.venv\Scripts\python.exe -m policydesk.cli study              # just the browser curriculum
 ```
+
+**The desktop icon is the one-click route.** It starts the study interface and the
+app itself, opens both in a browser, and runs the tutor in the window you clicked.
+Anything already listening on those ports is reused and left running afterwards; only
+what that window started gets stopped when you close it.
 
 The tutor prints the **real source** with the **exact file and line** to open, asks
 you to write an answer before showing you the right one, and offers to run the real
