@@ -26,6 +26,9 @@ dependencies = [
     # Milestone 4: the agent graph
     "langgraph==1.2.12",                      # state machine with cycles + interrupts
     "langgraph-checkpoint-sqlite==3.1.1",     # durable pauses, so approval can wait
+    # Milestone 6: Model Context Protocol. Pinned because 2.x renamed FastMCP to
+    # MCPServer and inputSchema to input_schema - writing either from memory breaks.
+    "mcp==2.3.0",
 ]
 
 [dependency-groups]

@@ -16,6 +16,8 @@ approve        approve an action a paused agent proposed
 reject         reject an action a paused agent proposed
 queue          show the Finance Operations review queue
 diagram        print the orchestration diagram as Mermaid
+mcp-server     run the MCP server over stdin/stdout
+mcp-demo       connect to the MCP server, discover its tools and call them
 
 Every command is read-only with respect to your settings, prints what it did,
 and returns a process exit code (0 = fine). That last part matters: a command
@@ -662,6 +664,57 @@ def cmd_diagram() -> int:
 
 
 # ---------------------------------------------------------------------------
+# mcp-server, mcp-demo  (Milestone 6)
+# ---------------------------------------------------------------------------
+
+
+def cmd_mcp_server() -> int:
+    """Run the MCP server over stdin/stdout. A client launches this."""
+    settings = _load_settings_or_explain()
+    if settings is None:
+        return 1
+    from .mcp_server import run_stdio
+
+    run_stdio()
+    return 0
+
+
+def cmd_mcp_demo() -> int:
+    """Start the server as a subprocess, discover its tools, call them."""
+    import asyncio
+
+    settings = _load_settings_or_explain()
+    if settings is None:
+        return 1
+
+    from .mcp_client import demo
+
+    try:
+        return asyncio.run(demo())
+    except BaseException as exc:  # noqa: BLE001
+        # An MCP session runs its transport and protocol in a task group, so a
+        # failure arrives wrapped in an ExceptionGroup. Printing only the group
+        # says "unhandled errors in a TaskGroup" and tells you nothing at all --
+        # the real cause is nested inside, sometimes two levels deep.
+        print("MCP demo failed:", file=sys.stderr)
+        for line in _flatten_exception(exc):
+            print(f"  {line}", file=sys.stderr)
+        return 1
+
+
+def _flatten_exception(exc: BaseException, depth: int = 0) -> list[str]:
+    """Walk an ExceptionGroup tree and return one readable line per real error."""
+    indent = "  " * depth
+    inner = getattr(exc, "exceptions", None)
+    if inner:
+        lines = [f"{indent}{type(exc).__name__}:"]
+        for child in inner:
+            lines += _flatten_exception(child, depth + 1)
+        return lines
+    return [f"{indent}{type(exc).__name__}: {exc}"]
+
+
+# ---------------------------------------------------------------------------
 # wiring
 # ---------------------------------------------------------------------------
 
@@ -719,6 +772,8 @@ def main(argv: list[str] | None = None) -> int:
     reject_parser.add_argument("--trace", action="store_true")
     sub.add_parser("queue", help="show the Finance Operations review queue")
     sub.add_parser("diagram", help="print the orchestration diagram as Mermaid")
+    sub.add_parser("mcp-server", help="run the MCP server over stdin/stdout")
+    sub.add_parser("mcp-demo", help="connect to the MCP server and call its tools")
 
     args = parser.parse_args(argv)
 
@@ -750,6 +805,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_queue()
     if args.command == "diagram":
         return cmd_diagram()
+    if args.command == "mcp-server":
+        return cmd_mcp_server()
+    if args.command == "mcp-demo":
+        return cmd_mcp_demo()
 
     parser.error(f"unknown command: {args.command}")
     return 2
