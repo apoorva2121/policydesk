@@ -11,6 +11,10 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
+# Evaluation runs are a RECORD, not regenerable state: a score from a
+# configuration you have since changed cannot be recreated. Committed on purpose.
+!eval-runs/
+
 # Generated data (regenerable from scripts; never commit indexes or DBs)
 data/processed/
 data/raw/*

@@ -231,7 +231,19 @@ def run_evaluation(
 
 
 def results_dir(settings: Settings) -> Path:
-    return settings.data_dir / "processed" / "eval-runs"
+    """Where saved evaluation runs live.
+
+    NOT under `data/processed/`, and that is a correction, not a preference.
+    They were there originally, and a clean rebuild -- `rm -rf data/processed`,
+    which is a documented, encouraged thing to do -- deleted the entire run
+    history. Three measurements, gone, with nothing to compare against.
+
+    Evaluation results are a RECORD, not a cache. The distinction is whether you
+    can regenerate them: an index you can rebuild in seconds, a score from a
+    configuration you have since changed you cannot. Records belong somewhere
+    deliberate, and this directory is committed to git for exactly that reason.
+    """
+    return settings.data_dir.parent / "eval-runs"
 
 
 def save_report(report: EvalReport, settings: Settings) -> Path:

@@ -563,3 +563,87 @@ Azure SQL can enforce row-level security. Nothing else should ship first.
 Nothing. The ten milestones are complete. What remains is study, and improving
 answer quality against the evaluation set — which is now a measurement rather than
 an opinion.
+
+---
+
+## 2026-10-04 — Final verification, and two findings worth more than the score
+
+### What was verified, actually run
+
+| Check | Result |
+| --- | --- |
+| `ruff check .` / `ruff format --check .` | clean, 62 files |
+| `pytest` | **261 passed** |
+| Clean install from `pyproject.toml` alone, in a throwaway venv | imports cleanly |
+| Full rebuild from nothing: `generate-data`, `extract`, `chunks`, `index`, `inspect-db` | 29 chunks, 37 expenses, 2 files correctly flagged for review |
+| All five question types through the agent | behaved as designed |
+| Approval cycle over HTTP | proposed, queue empty, approved, exactly one entry |
+| MCP server and client | 2 tools discovered, both called, injection quarantined |
+| Docker image build | **NOT verified** — Docker Desktop was not running |
+
+### Finding 1: the noise floor is about one case
+
+Three runs of the **same** configuration scored 81.8%, 86.4% and 81.8%. The cases
+that moved were `agg-05`, `cross-02` and `cross-03` — all borderline, flipping
+between a refusal and an answer.
+
+On 22 cases, one case is 4.5%. So **any improvement smaller than about 5% has not
+been demonstrated by this set**, no matter how pleasing the number looks. This is
+exactly why `compare` reports churn alongside the delta, and it retrospectively
+confirms the right reading of the gpt-4o experiment: that was not "no improvement
+worth the money", it was "no improvement detectable at all above the noise".
+
+The honest conclusions available from this evaluation set are therefore:
+
+- policy lookup works (9/9, stable across every run)
+- text-to-SQL works (4–5 of 5, one borderline case)
+- **cross-source reasoning is the weakness** (1/4, stable across every run — this
+  one is real, not noise)
+- retrieval and routing are not the problem (recall 0.92, MRR 0.82, tool choice 1.00)
+- gpt-4o buys nothing measurable here at 4.5× the cost
+
+To detect a 2% improvement you would need several times more cases. That is a
+sentence worth being able to say, because the alternative is shipping a change on
+the strength of a number that moved for no reason.
+
+### Finding 2: evaluation results are a record, not a cache
+
+`eval-runs/` was originally under `data/processed/`. During the final verification I
+ran `rm -rf data/processed` to prove the pipeline rebuilds from nothing — which is a
+documented, encouraged thing to do — and **deleted the entire evaluation history.**
+Three measurements, including the gpt-4o comparison, gone.
+
+The distinction I had missed: *can you regenerate it?* An index rebuilds in seconds.
+A score from a configuration you have since changed cannot be recreated at all.
+Those two things do not belong in the same directory.
+
+Fixed: `eval-runs/` now sits beside `data/`, not inside it, and is committed to git.
+The results are small JSON files, they are the history of every quality decision on
+the project, and they are now in version control where that history belongs.
+
+### The eleven bugs, as a list
+
+Every one was found by running the system or by a test, not by reading code. They
+are the most valuable thing in this repository.
+
+| # | Bug | The lesson |
+| --- | --- | --- |
+| 1 | Extraction flattened each page into one paragraph, destroying headings | Extraction must preserve the structure later stages depend on |
+| 2 | Schema did not list column values, so the model could not know "travel" was not a category | List low-cardinality values; the cheapest large win in text-to-SQL |
+| 3 | A valid, permitted query filtered on a non-existent value and returned NULL | Safe and correct are different problems |
+| 4 | CTEs rejected because a `WITH` name looked like a forbidden table | A regex validator will be wrong; that is why layers 3 and 4 exist |
+| 5 | Truncation undetectable: capped at the same number we tried to over-fetch | Ask for one more than you intend to keep |
+| 6 | **The planner called the write tool as an evidence step, bypassing approval entirely** | A gate protects one path. Enumerate every path |
+| 7 | Idempotency keyed on model-written text, so one finding made two queue entries | Never key idempotency on model output |
+| 8 | The grader held a veto on answering as well as on looping | Two components must not hold the same veto |
+| 9 | The trace logged reasons but not arguments | A trace without inputs cannot explain a run |
+| 10 | `\b` in a non-raw string is a BACKSPACE; the pattern matched nothing, invisibly | Always use raw strings for regexes |
+| 11 | A 404 returned 500 because the client was built before the thread was checked | Validate before constructing anything credentialed |
+
+Plus two design corrections: the injection scan was in the agent rather than the
+tool (so MCP bypassed it), and evaluation results were stored as regenerable state.
+
+### Status
+
+All ten milestones complete. 261 tests passing. Total model spend across the entire
+build, including every experiment: well under $1.
