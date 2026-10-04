@@ -26,6 +26,9 @@ data/raw/*
 study-progress.json
 study-progress.tmp
 
+# The icon and launcher ARE committed: they are small, reproducible, and part
+# of the project. `policydesk install-shortcut` regenerates them identically.
+
 # OS / editor
 Thumbs.db
 .DS_Store

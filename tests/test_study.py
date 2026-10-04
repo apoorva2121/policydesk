@@ -313,3 +313,119 @@ def test_unscored_questions_do_not_drag_the_mean_down(study_settings: Settings) 
 
     assert progress.mean_drill_score == 4.0
     assert len(progress.drill_scores) == 1
+
+
+# ---------------------------------------------------------------------------
+# The terminal tutor
+# ---------------------------------------------------------------------------
+
+
+def test_the_tutor_cites_a_file_and_a_line_for_every_snippet(capsys) -> None:  # noqa: ANN001
+    """The thing the tutor exists for.
+
+    Reading twenty lines in a terminal is fine; understanding them means having
+    the file open. So every snippet prints the exact path, the exact line, and a
+    command you can paste into an editor.
+    """
+    from policydesk.study.tutor import show_snippet
+
+    show_snippet(read_symbol("graph/nodes.py", "verify_node"))
+    output = capsys.readouterr().out
+
+    assert "OPEN THIS FILE" in output
+    assert "src/policydesk/graph/nodes.py:" in output
+    assert "code -g" in output
+    assert "def verify_node" in output
+
+
+def test_the_line_numbers_shown_match_the_real_file() -> None:
+    """A citation that points at the wrong line is worse than none."""
+    from pathlib import Path as _Path
+
+    snippet = read_symbol("graph/build.py", "route_after_grade")
+    assert snippet.found
+
+    source = _Path("src/policydesk/graph/build.py").read_text(encoding="utf-8").splitlines()
+    assert source[snippet.first_line - 1].strip().startswith("def route_after_grade")
+
+
+def test_a_missing_snippet_is_reported_in_the_terminal_not_raised(capsys) -> None:  # noqa: ANN001
+    from policydesk.study.tutor import show_snippet
+
+    show_snippet(read_symbol("config.py", "gone_away"))
+    output = capsys.readouterr().out
+
+    assert "no longer in" in output
+
+
+def test_quitting_is_not_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ctrl+C and a closed stdin both mean 'leave', not 'crash'.
+
+    A tutor that prints a KeyboardInterrupt traceback feels broken, and handling
+    EOF is what lets this be driven by a pipeline or a test without hanging.
+    """
+    import io
+
+    from policydesk.study.tutor import Quit, ask
+
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))  # stdin closed
+    with pytest.raises(Quit):
+        ask("anything")
+
+    monkeypatch.setattr("sys.stdin", io.StringIO("q\n"))  # typed 'q'
+    with pytest.raises(Quit):
+        ask("anything")
+
+
+def test_the_console_transliteration_table_covers_what_prose_uses() -> None:
+    """A Windows console in its default code page cannot print an em-dash.
+
+    Seen in testing: a dash came out as a replacement character mid-sentence,
+    which reads as a bug in the lesson rather than a terminal limitation.
+    """
+    from policydesk.study.tutor import TRANSLITERATE
+
+    for character in ("\u2014", "\u2019", "\u201c", "\u2026"):
+        assert character in TRANSLITERATE
+
+
+# ---------------------------------------------------------------------------
+# The desktop icon
+# ---------------------------------------------------------------------------
+
+
+def test_the_icon_is_generated_at_every_size_windows_asks_for(tmp_path: Path) -> None:
+    from PIL import Image
+
+    from policydesk.study.shortcut import ICON_SIZES, make_icon
+
+    path = make_icon(tmp_path / "test.ico")
+
+    assert path.exists()
+    image = Image.open(path)
+    assert set(image.info["sizes"]) == {(n, n) for n in ICON_SIZES}
+
+
+def test_the_launcher_points_at_this_project_and_keeps_its_window_open(
+    tmp_path: Path,
+) -> None:
+    """A shortcut straight to python.exe closes the instant it ends, taking any
+    error message with it. The launcher pauses so you can read it."""
+    from policydesk.study.shortcut import make_launcher
+
+    path = make_launcher(tmp_path / "launch.cmd")
+    text = path.read_text(encoding="utf-8")
+
+    assert "policydesk.cli learn" in text
+    assert "pause" in text
+    assert ".venv" in text
+    assert "if not exist" in text  # explains a missing environment rather than failing silently
+
+
+def test_the_desktop_is_found_rather_than_assumed() -> None:
+    r"""On a machine with OneDrive the real Desktop is redirected, and writing to
+    %USERPROFILE%\Desktop creates a shortcut nobody ever sees."""
+    from policydesk.study.shortcut import desktop_directory
+
+    found = desktop_directory()
+    assert found is None or found.is_dir()

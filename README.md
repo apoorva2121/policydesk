@@ -72,6 +72,9 @@ model work, including the entire test suite.
 | `mcp-server` / `mcp-demo` | the MCP server, and a client that uses it |
 | `serve` | the HTTP API (localhost only: there is no authentication) |
 | `ui` | the Streamlit interface |
+| `learn` | **step-by-step tutor in this terminal**, with file:line citations |
+| `study` | the same curriculum in a browser |
+| `install-shortcut` | put a desktop icon on your Desktop that opens the tutor |
 | `cache-clear` | delete cached model responses |
 | `langfuse-setup` | how to run Langfuse locally, and whether it is reachable |
 
@@ -97,6 +100,20 @@ cross_source         1/4               the weakness: reasoning over combined evi
 The most useful finding in the whole project: **gpt-4o scored identically to
 gpt-4o-mini (86.4%) at 4.5× the cost.** "Use a stronger model" was an assumption,
 and measuring it cost 8 cents to disprove.
+
+## Learning it
+
+Three ways in, sharing one curriculum and one progress file:
+
+```powershell
+.venv\Scripts\python.exe -m policydesk.cli install-shortcut   # a desktop icon
+.venv\Scripts\python.exe -m policydesk.cli learn              # the terminal tutor
+.venv\Scripts\python.exe -m policydesk.cli study              # the same, in a browser
+```
+
+The tutor prints the **real source** with the **exact file and line** to open, asks
+you to write an answer before showing you the right one, and offers to run the real
+command. 7 guided sessions, all 33 files, and 14 scored interview questions.
 
 ## Documentation
 

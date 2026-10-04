@@ -24,7 +24,9 @@ eval-compare   compare the two most recent saved runs, honestly about noise
 langfuse-setup show how to run Langfuse locally and whether it is reachable
 serve          run the HTTP API (localhost only: there is no authentication)
 ui             run the Streamlit interface
-study          run the interactive study interface (guided path, code tour, drill)
+study          run the interactive study interface in a browser
+learn          step-by-step tutor in this terminal, with file:line citations
+install-shortcut  create a desktop icon that opens the tutor
 
 Every command is read-only with respect to your settings, prints what it did,
 and returns a process exit code (0 = fine). That last part matters: a command
@@ -34,6 +36,7 @@ that prints "error" but exits 0 will quietly pass in a CI pipeline forever.
 from __future__ import annotations
 
 import argparse
+import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -1019,6 +1022,58 @@ def cmd_study(port: int) -> int:
 
 
 # ---------------------------------------------------------------------------
+# learn, install-shortcut
+# ---------------------------------------------------------------------------
+
+
+def cmd_learn() -> int:
+    """Run the step-by-step tutor in this terminal."""
+    settings = _load_settings_or_explain()
+    if settings is None:
+        return 1
+
+    from .study.tutor import run
+
+    return run(settings)
+
+
+def cmd_install_shortcut() -> int:
+    """Create a desktop icon that opens the tutor.
+
+    This is the only command that writes outside the project, so it says exactly
+    what it is about to do and where.
+    """
+    settings = _load_settings_or_explain()
+    if settings is None:
+        return 1
+
+    from .study.shortcut import desktop_directory, install
+
+    target = desktop_directory()
+    print("This will create:")
+    print("  assets/policydesk.ico            an icon, drawn by the project")
+    print("  scripts/Learn PolicyDesk.cmd     a launcher that keeps its window open")
+    destination = target or "(Desktop not found)"
+    print(f"  {destination}{os.sep}Learn PolicyDesk.lnk")
+    print()
+
+    result = install()
+
+    print(f"icon      {result['icon']}")
+    print(f"launcher  {result['launcher']}")
+    if result["shortcut"]:
+        print(f"shortcut  {result['shortcut']}")
+        print()
+        print("Double-click 'Learn PolicyDesk' on your Desktop to start.")
+        return 0
+
+    print()
+    print(f"The shortcut was NOT created: {result['message']}", file=sys.stderr)
+    print("The launcher still works -- double-click it, or run: policydesk learn")
+    return 1
+
+
+# ---------------------------------------------------------------------------
 # wiring
 # ---------------------------------------------------------------------------
 
@@ -1100,6 +1155,8 @@ def main(argv: list[str] | None = None) -> int:
     ui_parser.add_argument("--port", type=int, default=8501)
     study_parser = sub.add_parser("study", help="run the interactive study interface")
     study_parser.add_argument("--port", type=int, default=8502)
+    sub.add_parser("learn", help="step-by-step tutor in this terminal")
+    sub.add_parser("install-shortcut", help="create a desktop icon that opens the tutor")
 
     args = parser.parse_args(argv)
 
@@ -1149,6 +1206,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_ui(args.port)
     if args.command == "study":
         return cmd_study(args.port)
+    if args.command == "learn":
+        return cmd_learn()
+    if args.command == "install-shortcut":
+        return cmd_install_shortcut()
 
     parser.error(f"unknown command: {args.command}")
     return 2
