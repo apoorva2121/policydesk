@@ -151,3 +151,50 @@ def test_the_policy_tool_itself_quarantines_hostile_passages(
     assert "USD 5000" not in texts, "the injected limit reached a consumer of the tool"
     assert result.data["quarantined"], "the quarantine was not reported"
     assert "quarantined" in result.summary
+
+
+def test_a_narrow_search_cannot_slip_past_the_quarantine(
+    sample_data: dict[str, Path], tmp_path: Path
+) -> None:
+    """A real flaw, found by reading the trace of the injection demo.
+
+    The planner asked for `top_k: 1`. Retrieval returned the single best passage --
+    the legitimate meal section -- and the hostile addendum, which ranks second for
+    that exact query, was never fetched. So the quarantine had nothing to catch, the
+    agent refused for an unrelated reason, and the whole run looked like a
+    successful defence while demonstrating nothing at all.
+
+    The lesson is not about this one document. A guardrail that only inspects what
+    retrieval happened to return is silently disabled by a narrower search, and the
+    model controls the width. So the width has a floor the model cannot go under.
+    """
+    from policydesk.rag import build_index, chunk_blocks
+    from policydesk.tools import PolicySearchTool
+    from policydesk.tools.policy_tool import MINIMUM_TOP_K
+
+    settings = Settings(
+        app_env="test",
+        _env_file=None,
+        vector_store_dir=tmp_path / "chroma",
+        data_dir=tmp_path,
+    )
+
+    blocks = extract_pdf(sample_data["travel_policy_pdf"]).blocks
+    blocks += extract_pdf(sample_data["poisoned_pdf"]).blocks
+    chunks = chunk_blocks(blocks, strategy="section")
+
+    llm = FakeLLMClient(settings)
+    index = build_index(chunks, llm, settings)
+    tool = PolicySearchTool(settings, llm, index=index)
+
+    result = tool.run({"query": "meal per diem limit", "top_k": 1})
+
+    assert result.ok
+    texts = " ".join(passage["text"] for passage in result.data["passages"])
+    assert "USD 5000" not in texts
+    assert result.data["quarantined"], (
+        "a top_k of 1 walked the search past the hostile passage instead of "
+        "retrieving and quarantining it"
+    )
+    # Reported, not silent: a clamp nobody is told about is a lie about what ran.
+    assert f"top_k raised 1 -> {MINIMUM_TOP_K}" in result.summary

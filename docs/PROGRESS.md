@@ -621,7 +621,7 @@ Fixed: `eval-runs/` now sits beside `data/`, not inside it, and is committed to 
 The results are small JSON files, they are the history of every quality decision on
 the project, and they are now in version control where that history belongs.
 
-### The eleven bugs, as a list
+### The fifteen bugs, as a list
 
 Every one was found by running the system or by a test, not by reading code. They
 are the most valuable thing in this repository.
@@ -639,9 +639,56 @@ are the most valuable thing in this repository.
 | 9 | The trace logged reasons but not arguments | A trace without inputs cannot explain a run |
 | 10 | `\b` in a non-raw string is a BACKSPACE; the pattern matched nothing, invisibly | Always use raw strings for regexes |
 | 11 | A 404 returned 500 because the client was built before the thread was checked | Validate before constructing anything credentialed |
+| 12 | **The planner chose `top_k: 1`, so the hostile passage at rank 2 was never retrieved and the injection quarantine never fired** | A guardrail that only inspects what retrieval returned is switched off by a narrower search -- and the model controls the width |
+| 13 | Streamlit lost the answer the moment Approve was pressed, because it was drawn inside the click handler | Draw from stored state; the framework re-runs the whole script on every interaction |
+| 14 | The run fingerprint omitted the retrieval floor, so `eval-compare` called a real change "IDENTICAL CONFIGURATION" | A fingerprint must cover everything that changes behaviour, not everything that lives in `.env` |
+| 15 | Re-running the eval to check a result replayed it from cache and "confirmed" it | A replay cannot disagree with the run it replays |
 
 Plus two design corrections: the injection scan was in the agent rather than the
 tool (so MCP bypassed it), and evaluation results were stored as regenerable state.
+
+### Finding 12 in full: the quarantine that was never reached
+
+Bugs 12 to 15 all came out of one review, and they came out in a chain, which is
+the part worth keeping.
+
+The UI's "An attack" example refused the question, which looked like the injection
+defence working. The trace said otherwise:
+
+```
+2. plan (attempt 1): policy_search {"query": "meal per diem limit", "top_k": 1}
+3. gather: policy_search -> 1 passage(s), best similarity 0.646
+```
+
+`top_k: 1`. The hostile addendum ranks **second** for that query (0.554), so it was
+never fetched. Nothing was quarantined because nothing hostile had been retrieved;
+the refusal was for an unrelated reason. **A passing demo proving nothing is worse
+than a failing one**, because nobody investigates it.
+
+The field allowed it: `top_k: int = Field(default=6, ge=1, le=20)`. A schema bound
+describes what is *parseable*, not what is *sensible*. The fix is a floor in the
+tool (`MINIMUM_TOP_K = 3`), reported in the summary rather than applied silently:
+
+```
+3. gather: policy_search -> 2 passage(s) ...; 1 passage(s) quarantined as hostile; top_k raised 1 -> 3 (floor)
+```
+
+Then measuring the fix produced bugs 14 and 15 in turn. `eval-compare` announced
+"IDENTICAL CONFIGURATION -- nothing was changed" about a run in which the floor had
+just been added, because the fingerprint only covered settings and the floor lives
+in code. With that fixed it said "better by +4.5%" -- which is exactly the measured
+noise floor, so the verdict now names that for changed configurations too, not only
+identical ones.
+
+It then advised re-running before believing it. The re-run cost **$0.0000** and
+returned an identical score: a complete cache replay, which cannot disagree with
+the run it replays. A genuine second sample (`LLM_CACHE_ENABLED=false`) came back at
+**19/22 -- the baseline rate.**
+
+So the honest conclusion is that **the floor's benefit is not demonstrable on this
+22-case set.** It is justified on different grounds entirely: the quarantine
+provably fires now, and that is deterministic rather than statistical. Worth
+separating those two kinds of argument, because only one of them needs an eval.
 
 ### Finding 1b: the comparison tool was flattering itself
 

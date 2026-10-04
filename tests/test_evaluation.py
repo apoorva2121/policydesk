@@ -408,3 +408,63 @@ def test_a_genuinely_different_configuration_is_compared_normally() -> None:
 
     assert result.same_configuration is False
     assert "IDENTICAL CONFIGURATION" not in result.verdict()
+
+
+def test_a_single_case_moving_is_reported_as_undemonstrated_even_when_config_changed() -> None:
+    """The measured noise floor applies to real changes too.
+
+    The original verdict only invoked the noise floor when the two configurations
+    were identical. So a genuine change that moved exactly one case was reported as
+    "better by +4.5% with 1 case(s) changed" -- the same flattering sentence the
+    identical-config branch was written to prevent, just one step further along.
+
+    This is not hypothetical: adding the retrieval floor moved one case, and the
+    tool called it an improvement. An independent sample then came back at the
+    baseline rate, which is what the noise floor had been telling us all along.
+    """
+    baseline = _report("before", {f"c{n}": n > 0 for n in range(22)})
+    candidate = _report("after", {f"c{n}": True for n in range(22)})
+    # floor=1 is what the runs recorded before the floor existed.
+    baseline.configuration = RunConfiguration(
+        **{**baseline.configuration.model_dump(), "retrieval_floor": 1}
+    )
+
+    result = compare(baseline, candidate)
+
+    assert result.churn == 1
+    assert not result.same_configuration, "the floor must be part of the fingerprint"
+    assert "UNDEMONSTRATED" in result.verdict()
+
+
+def test_the_retrieval_floor_is_part_of_the_run_fingerprint() -> None:
+    """It lives in code rather than in `.env`, and was therefore left out.
+
+    The consequence was concrete: `compare()` saw two identical fingerprints and
+    announced "IDENTICAL CONFIGURATION -- nothing was changed" about a run in which
+    the retrieval floor had just been added. A fingerprint must cover everything
+    that can change behaviour, not just what happens to be a setting.
+    """
+    from policydesk.tools.policy_tool import MINIMUM_TOP_K
+
+    settings = Settings(app_env="test", _env_file=None)
+    config = RunConfiguration.from_settings(settings)
+
+    assert config.retrieval_floor == MINIMUM_TOP_K
+    assert f"floor={MINIMUM_TOP_K}" in config.label()
+
+
+def test_a_fully_cached_run_is_flagged_as_a_replay() -> None:
+    """A zero-cost run cannot confirm anything.
+
+    The comparison tool said "re-run before believing it". The eval was re-run,
+    returned an identical score, and that looked like confirmation. It was not: the
+    response cache keys on the complete request, so nothing was asked and nothing
+    was learned. A replay cannot disagree with the run it replays.
+    """
+    replay = _report("second-look", {"a": True, "b": False})
+    assert replay.total_cost_usd == 0.0
+    assert replay.is_replay
+
+    real = _report("real", {"a": True, "b": False})
+    real.cases[0].cost_usd = 0.0003
+    assert not real.is_replay

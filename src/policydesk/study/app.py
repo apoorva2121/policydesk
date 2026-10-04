@@ -30,11 +30,11 @@ import subprocess
 import sys
 from typing import Any
 
-from ..config import Settings, get_settings
-from . import progress as progress_store
-from .content import DRILL, SESSIONS, TOUR, drill_groups, tour_groups
-from .progress import StudyProgress
-from .snippets import Snippet, read_constant, read_module_docstring, read_symbol
+from policydesk.config import Settings, get_settings
+from policydesk.study import progress as progress_store
+from policydesk.study.content import DRILL, SESSIONS, TOUR, drill_groups, tour_groups
+from policydesk.study.progress import StudyProgress
+from policydesk.study.snippets import Snippet, read_constant, read_module_docstring, read_symbol
 
 # Commands that call the API. Everything else is free.
 COSTS_MONEY = ("index", "ask", "agent", "eval", "mcp-demo", "approve", "reject")
@@ -96,11 +96,15 @@ def _show_snippet(st: Any, snippet: Snippet, language: str = "python") -> None:
     st.code(snippet.code, language=language)
 
 
-def _run_block(st: Any, label: str, arguments: str, key: str) -> None:
+def _run_block(st: Any, label: str, arguments: str, key: str, show_command: bool = True) -> None:
     """A labelled button that runs a real command and shows its output."""
     warning = "  ·  costs a fraction of a cent" if costs_money(arguments) else "  ·  free"
     st.markdown(f"**{label}**{warning}")
-    st.code(f"policydesk {arguments}".replace("policydesk __pytest__", "pytest"), language="bash")
+    if show_command:
+        st.code(
+            f"policydesk {arguments}".replace("policydesk __pytest__", "pytest"),
+            language="bash",
+        )
 
     if st.button("Run it", key=f"run-{key}", use_container_width=False):
         with st.spinner("Running the real command..."):
@@ -126,12 +130,16 @@ def _predict_then_reveal(
     record,  # noqa: ANN001
     saved_prediction: str,
     revealed: bool,
+    run_label: str = "",
+    run_arguments: str = "",
+    run_key: str = "",
 ) -> None:
-    """The core interaction: commit to an answer, then see the expected one.
+    """Commit to an answer, run the command, and only then read the explanation.
 
-    The reveal button is disabled until something is written. Not to be strict for
-    its own sake -- because an answer you read before committing teaches you almost
-    nothing, and this is the only part of the plan that reliably sticks.
+    The ordering is the lesson. Revealing before running spoils the run: you
+    already know what will happen, so watching it teaches nothing. And the reveal
+    button stays disabled until something is written, because an answer you read
+    before committing teaches almost nothing.
     """
     st.markdown(f"#### {question}")
     written = st.text_area(
@@ -148,8 +156,14 @@ def _predict_then_reveal(
         st.toast("Saved")
 
     can_reveal = bool(written.strip()) or revealed
+
+    if run_label and run_arguments:
+        st.divider()
+        # The command was already shown above the question, so do not repeat it.
+        _run_block(st, run_label, run_arguments, run_key or key, show_command=False)
+
     if right.button(
-        "Reveal the answer",
+        "Reveal the explanation",
         key=f"reveal-{key}",
         disabled=not can_reveal,
         type="primary",
@@ -161,7 +175,10 @@ def _predict_then_reveal(
         right.caption("Write something first — even a guess.")
 
     if revealed or st.session_state.get(f"revealed-{key}"):
+        st.markdown("**Why that happened**")
         st.info(answer)
+        if written:
+            st.caption(f"You predicted: {written[:300]}")
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +209,18 @@ def render_guided(st: Any, settings: Settings, progress: StudyProgress) -> None:
         with st.expander(f"{mark}{index + 1}. {step.title}", expanded=not record.done):
             st.markdown(step.instruction)
 
+            # The command comes FIRST, before the question.
+            #
+            # A bug a reader found in the terminal version and which was here too:
+            # being asked "which document will it cite?" without having been shown
+            # the question put to the system is not a prediction, it is a guessing
+            # game. You cannot reason about a command you have not seen.
+            if step.run:
+                st.divider()
+                command, extra = step.run
+                st.markdown("**What we are about to run:**")
+                st.code(f"policydesk {command} {extra}".strip(), language="bash")
+
             if step.read:
                 st.divider()
                 st.markdown("**Read these, from the real files:**")
@@ -208,12 +237,10 @@ def render_guided(st: Any, settings: Settings, progress: StudyProgress) -> None:
                     record=progress.record_step,
                     saved_prediction=record.prediction,
                     revealed=record.revealed,
+                    run_label="Now run it and watch" if step.run else "",
+                    run_arguments=(f"{step.run[0]} {step.run[1]}".strip() if step.run else ""),
+                    run_key=key,
                 )
-
-            if step.run:
-                st.divider()
-                command, extra = step.run
-                _run_block(st, "Run it and compare", f"{command} {extra}".strip(), key)
 
             st.divider()
             if st.checkbox("I understand this step", value=record.done, key=f"done-{key}"):
@@ -422,7 +449,7 @@ def render_status(st: Any, settings: Settings, progress: StudyProgress) -> None:
         "If this is empty, run `policydesk eval --save`."
     )
 
-    from ..evaluation import latest_reports
+    from policydesk.evaluation import latest_reports
 
     reports = latest_reports(settings, count=5)
     if not reports:

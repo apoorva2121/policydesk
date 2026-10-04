@@ -57,8 +57,9 @@ def run() -> None:
     """The whole app. Streamlit re-runs this top to bottom on every interaction."""
     import streamlit as st
 
-    from .config import get_settings
-    from .rag import index_exists
+    from policydesk.config import get_settings
+    from policydesk.rag import index_exists
+    from policydesk.tools.policy_tool import MINIMUM_TOP_K
 
     st.set_page_config(page_title="PolicyDesk", page_icon="📄", layout="wide")
 
@@ -92,7 +93,12 @@ def run() -> None:
             ("Routing model", settings.chat_model),
             ("Embeddings", settings.embedding_model),
             ("Chunking", f"{settings.chunk_strategy} / {settings.chunk_size_chars}"),
-            ("Passages per search", settings.retrieval_top_k),
+            # Deliberately not labelled "passages per search". On this page the
+            # agent picks its own top_k per call; `retrieval_top_k` only governs
+            # the plain `policydesk ask` path. Showing it as the agent's setting
+            # made the sidebar state a number the run did not use.
+            ("Passages (plain ask)", settings.retrieval_top_k),
+            ("Passages (agent)", f"it chooses, min {MINIMUM_TOP_K}"),
             ("Max search retries", settings.max_graph_loops),
             ("Spend cap per run", f"${settings.max_spend_usd_per_run:.2f}"),
             ("Response cache", "on" if settings.llm_cache_enabled else "off"),
@@ -127,13 +133,21 @@ def run() -> None:
     if st.button("Ask", type="primary") and question.strip():
         _ask(st, settings, question.strip(), allow_actions)
 
+    # Render from stored state, not from the click that produced it. Streamlit
+    # re-runs this entire script on every interaction, so an answer drawn only
+    # inside `_ask` vanishes the moment you press anything else -- including the
+    # approval buttons, which is precisely when you most need it on screen.
+    last_run = st.session_state.get("last_run")
+    if last_run is not None:
+        _render_run(st, last_run)
+
     # A pending approval survives a re-run because it is held in session state.
     _render_pending(st, settings)
 
 
 def _ask(st: Any, settings: Any, question: str, allow_actions: bool) -> None:
-    from .pipeline import run_agent
-    from .rag import IndexMismatch
+    from policydesk.pipeline import run_agent
+    from policydesk.rag import IndexMismatch
 
     with st.spinner("Planning, searching, checking..."):
         try:
@@ -151,8 +165,6 @@ def _ask(st: Any, settings: Any, question: str, allow_actions: bool) -> None:
     st.session_state["last_run"] = run
     if run.waiting_for_approval:
         st.session_state["pending_thread"] = run.thread_id
-
-    _render_run(st, run)
 
 
 def _render_run(st: Any, run: Any) -> None:
@@ -227,24 +239,35 @@ def _render_pending(st: Any, settings: Any) -> None:
         st.session_state.pop("pending_thread", None)
         return
 
-    st.divider()
-    st.subheader("Waiting for your decision")
-    st.warning(
-        "The agent wants to change data. **It has not done it.** The whole run is "
-        "saved to disk, so you can decide now or come back later."
-    )
-    st.markdown(f"**What it wants to do:** {action.rationale}")
-    st.json(action.arguments)
+    # The gate lives in a placeholder so it can be taken off the screen the
+    # instant it is resolved. Streamlit draws top to bottom, so without this the
+    # buttons remain underneath the word "Approved" -- an open gate that has
+    # already been closed, which is the one thing this screen must never show.
+    gate = st.empty()
+    decision = None
+    with gate.container():
+        st.divider()
+        st.subheader("Waiting for your decision")
+        st.warning(
+            "The agent wants to change data. **It has not done it.** The whole run is "
+            "saved to disk, so you can decide now or come back later."
+        )
+        st.markdown(f"**What it wants to do:** {action.rationale}")
+        st.json(action.arguments)
 
-    approve, reject = st.columns(2)
-    if approve.button("Approve", type="primary", use_container_width=True):
-        _decide(st, settings, thread_id, "approved")
-    if reject.button("Reject", use_container_width=True):
-        _decide(st, settings, thread_id, "rejected")
+        approve, reject = st.columns(2)
+        if approve.button("Approve", type="primary", use_container_width=True):
+            decision = "approved"
+        if reject.button("Reject", use_container_width=True):
+            decision = "rejected"
+
+    if decision is not None:
+        gate.empty()
+        _decide(st, settings, thread_id, decision)
 
 
 def _decide(st: Any, settings: Any, thread_id: str, approval: str) -> None:
-    from .pipeline import resume_agent
+    from policydesk.pipeline import resume_agent
 
     with st.spinner(f"Recording your decision ({approval})..."):
         try:

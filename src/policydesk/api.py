@@ -130,8 +130,24 @@ def create_app(settings: Settings | None = None):
         """
         return {"status": "alive"}
 
-    @app.get("/readyz", tags=["ops"])
-    def readyz() -> JSONResponse:
+    # `response_class` rather than a `-> JSONResponse` return annotation.
+    #
+    # This module uses `from __future__ import annotations`, so every annotation is
+    # a STRING that FastAPI resolves against the function's module globals. But
+    # FastAPI is imported lazily inside this factory -- deliberately, so the CLI
+    # does not pay its import cost on every command -- which means `JSONResponse`
+    # is a local name and the string never resolves. FastAPI then fell back to
+    # treating the unresolved ForwardRef as a response MODEL, and generating the
+    # schema died:
+    #
+    #   PydanticUserError: `TypeAdapter[Annotated[ForwardRef('JSONResponse'), ...]]`
+    #   is not fully defined
+    #
+    # So `GET /openapi.json` and `/docs` both returned 500 while every actual
+    # endpoint worked perfectly. No test caught it because the tests called the
+    # endpoints, and nothing had ever asked the app to describe itself.
+    @app.get("/readyz", tags=["ops"], response_class=JSONResponse)
+    def readyz():
         """Can I actually serve a request? Checks the things a request needs.
 
         Separate from liveness because the right response differs: not-ready means
@@ -226,10 +242,18 @@ def _to_response(run: Any) -> AskResponse:
         else None
     )
 
+    # On a refusal the raw answer still carries the internal protocol token the
+    # model was told to emit -- "INSUFFICIENT_EVIDENCE: ...". That is a private
+    # signal between the prompt and the graph, and a caller rendering `answer`
+    # would put it in front of a person. `missing` already holds the same sentence
+    # in plain words, and `answer` is Optional for exactly this case.
+    refused = bool(state.get("refused"))
+    answer = None if refused else state.get("answer")
+
     return AskResponse(
         thread_id=run.thread_id,
-        answer=state.get("answer"),
-        refused=bool(state.get("refused")),
+        answer=answer,
+        refused=refused,
         missing=state.get("missing"),
         citations=[
             Citation(number=number, source=source)

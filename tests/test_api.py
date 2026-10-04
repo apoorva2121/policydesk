@@ -198,3 +198,76 @@ def test_the_ui_module_imports_without_streamlit_running() -> None:
     import policydesk.ui as ui
 
     assert callable(ui.run)
+
+
+def test_the_app_can_describe_itself(client: TestClient) -> None:
+    """`GET /openapi.json` and `/docs` returned 500 while every endpoint worked.
+
+    `readyz` was annotated `-> JSONResponse`. With `from __future__ import
+    annotations` that is the STRING "JSONResponse", resolved against the module's
+    globals -- but FastAPI is imported lazily inside `create_app`, so the name is a
+    local and never resolves. FastAPI then treated the unresolved ForwardRef as a
+    response model and schema generation raised PydanticUserError.
+
+    Nothing caught it because every test called an endpoint, and calling an endpoint
+    never asks the application to describe itself. Two different capabilities.
+    """
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200, response.text
+    schema = response.json()
+    assert "/readyz" in schema["paths"]
+    assert "/ask" in schema["paths"]
+
+    # The interactive docs page is what a human actually opens.
+    assert client.get("/docs").status_code == 200
+
+
+def test_a_refusal_does_not_ship_the_internal_protocol_token() -> None:
+    """`answer` carried "INSUFFICIENT_EVIDENCE: ..." straight out of the model.
+
+    That token is a private signal between the prompt and the graph, used so a
+    refusal can be detected exactly rather than by matching apologetic phrasing. A
+    caller rendering `answer` would have put it in front of a person.
+
+    `missing` already holds the same sentence in plain words, and `answer` is
+    Optional precisely so a refusal can leave it empty. The translation layer in
+    `_to_response` exists to stop internals leaking merely because they happen to
+    be in the object; this was a case of it not doing that.
+
+    Tested directly on the translation rather than over HTTP, because reaching a
+    model-produced refusal needs a real API key and this has nothing to do with the
+    network.
+    """
+    from types import SimpleNamespace
+
+    from policydesk.api import _to_response
+
+    refusal = SimpleNamespace(
+        thread_id="run-test",
+        state={
+            "answer": "INSUFFICIENT_EVIDENCE: the evidence says nothing about share prices.",
+            "refused": True,
+            "missing": "the evidence says nothing about share prices.",
+        },
+        usage="",
+        tracer=None,
+        waiting_for_approval=False,
+    )
+
+    response = _to_response(refusal)
+
+    assert response.refused is True
+    assert response.answer is None
+    assert response.missing, "a refusal must still say what was missing"
+    assert "INSUFFICIENT_EVIDENCE" not in response.model_dump_json()
+
+    # An ordinary answer is still passed through untouched.
+    answered = SimpleNamespace(
+        thread_id="run-test-2",
+        state={"answer": "The limit is USD 85 [1].", "refused": False},
+        usage="",
+        tracer=None,
+        waiting_for_approval=False,
+    )
+    assert _to_response(answered).answer == "The limit is USD 85 [1]."

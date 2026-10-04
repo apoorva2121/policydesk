@@ -483,3 +483,173 @@ def test_an_empty_answer_is_allowed_rather_than_blocking(monkeypatch) -> None:  
 
     monkeypatch.setattr("sys.stdin", io.StringIO("skip\n"))
     assert ask_long("anything") == ""
+
+
+# ---------------------------------------------------------------------------
+# Rendering the lessons
+# ---------------------------------------------------------------------------
+
+
+def test_emphasis_markers_are_removed_but_the_words_are_kept() -> None:
+    """A bug that was invisible until the output was read.
+
+    The replacement was written as a backreference string and lost its backslash
+    in transit, becoming a literal control byte. Bold words were being REPLACED by
+    an invisible character rather than kept -- so the lesson silently lost text.
+    """
+    from policydesk.study.tutor import render_inline
+
+    out = render_inline("the input is **not** the user's `question`")
+
+    assert "not" in out
+    assert "question" in out
+    assert "**" not in out
+    assert chr(1) not in out, "a backreference turned into a control byte"
+
+
+def test_no_lesson_renders_a_control_character() -> None:
+    """Checked across every module docstring, not just one example."""
+    from policydesk.study.snippets import read_module_docstring
+    from policydesk.study.tutor import render_inline
+
+    for item in TOUR:
+        doc = read_module_docstring(item.path)
+        if not doc.found:
+            continue
+        rendered = render_inline(doc.code)
+        for code in range(1, 9):
+            assert chr(code) not in rendered, f"{item.path} renders a control byte"
+
+
+def test_docstring_headings_survive_rendering(capsys) -> None:  # noqa: ANN001
+    """Module docstrings use RST headings, and flowing them destroyed the structure.
+
+    "Why this file exists -------------------- Settings come from..." is what a
+    naive wrap produced, which reads as broken formatting.
+    """
+    from policydesk.study.snippets import read_module_docstring
+    from policydesk.study.tutor import paragraph
+
+    paragraph(read_module_docstring("guardrails.py").code, indent="  ")
+    output = capsys.readouterr().out
+
+    assert "Read this first" in output
+    # The heading must be on its own line, not swallowed into the paragraph.
+    for line in output.splitlines():
+        if "Read this first" in line:
+            assert line.strip() == "Read this first"
+            break
+    else:
+        raise AssertionError("the heading was not rendered on its own line")
+
+
+def test_a_numbered_list_keeps_its_items_separate(capsys) -> None:  # noqa: ANN001
+    """Re-flowing a list into a paragraph destroys the list."""
+    from policydesk.study.tutor import paragraph
+
+    paragraph(
+        "Ranked by worth:\n\n"
+        "1. The model cannot do the dangerous thing, because it is code and not\n"
+        "   a prompt.\n"
+        "2. Tool allow-list and validated input.\n"
+        "3. Output checks.\n",
+        indent="  ",
+    )
+    output = capsys.readouterr().out
+
+    assert "1. The model cannot do" in output
+    assert "2. Tool allow-list" in output
+    assert "3. Output checks" in output
+    # The continuation of item 1 must stay with item 1, not start a new block.
+    assert "a prompt." in output
+
+
+def test_streamlit_entry_points_use_absolute_imports() -> None:
+    """A bug found only by opening the page in a browser.
+
+    Streamlit executes these files as TOP-LEVEL SCRIPTS, not as package modules,
+    so a relative import has no parent package to resolve against and the app dies
+    with `ImportError: attempted relative import with no known parent package`.
+
+    The trap: the server still returns HTTP 200. The page it serves is the error.
+    So an HTTP check is not evidence that a Streamlit app works, and this test
+    exists because that check was trusted once.
+    """
+    import re
+
+    for relative in ("ui.py", "study/app.py"):
+        path = Path("src/policydesk") / relative
+        source = path.read_text(encoding="utf-8")
+        offenders = re.findall(r"^\s*from \.+\w*", source, flags=re.MULTILINE)
+        assert not offenders, (
+            f"{relative} is run by Streamlit as a script and must use absolute "
+            f"imports, but has: {offenders}"
+        )
+
+
+def test_the_streamlit_entry_points_execute_as_scripts() -> None:
+    """Compile and execute the module body the way Streamlit does.
+
+    Stronger than the import check above: it would catch any other
+    package-context assumption, not just the import syntax.
+    """
+    for relative in ("ui.py", "study/app.py"):
+        path = Path("src/policydesk") / relative
+        source = path.read_text(encoding="utf-8").split("if __name__")[0]
+        namespace: dict = {"__name__": "__streamlit_script__", "__file__": str(path)}
+        exec(compile(source, str(path), "exec"), namespace)  # noqa: S102
+        assert "run" in namespace, f"{relative} does not define run()"
+
+
+def test_the_answer_is_rendered_from_stored_state_not_from_the_click() -> None:
+    """A bug found only by clicking Approve and looking at the page afterwards.
+
+    Streamlit re-runs the whole script on every interaction. `_ask` is only
+    entered when the Ask button is the thing that was pressed, so an answer drawn
+    inside `_ask` is erased by the very next click -- including Approve. The page
+    then showed the approval result and nothing else: the answer, its citations
+    and its verification line all disappeared at the exact moment you needed to
+    compare them against the action being approved.
+
+    The fix is to draw from `st.session_state["last_run"]`, which survives the
+    re-run. This test pins that down: `_render_run` must be called from `run`,
+    never from `_ask`.
+    """
+    import ast
+
+    tree = ast.parse(Path("src/policydesk/ui.py").read_text(encoding="utf-8"))
+    functions = {node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+
+    def calls_in(name: str) -> set[str]:
+        return {
+            node.func.id
+            for node in ast.walk(functions[name])
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+
+    assert "_render_run" not in calls_in("_ask"), (
+        "_ask must not render. Streamlit only enters it on the Ask click, so "
+        "anything drawn there vanishes on the next interaction."
+    )
+    assert "_render_run" in calls_in("run"), (
+        "run() must render the stored last_run on every pass, or the answer "
+        "survives only until the next button press."
+    )
+
+
+def test_the_approval_gate_is_removed_once_it_is_resolved() -> None:
+    """Streamlit draws top to bottom, so the buttons are already on the page by
+    the time the decision is handled. Without a placeholder to clear, the screen
+    ends up showing a live Approve button underneath the word "Approved" -- an
+    open gate that has already been closed. On the one screen whose entire
+    purpose is to teach that a human decides, that is the worst thing to show.
+    """
+    source = Path("src/policydesk/ui.py").read_text(encoding="utf-8")
+    gate = source[source.index("def _render_pending") : source.index("def _decide")]
+
+    assert "st.empty()" in gate, "the gate must live in a placeholder it can clear"
+    assert "gate.empty()" in gate, "the resolved gate must be taken off the screen"
+    assert "_decide(st, settings, thread_id, decision)" in gate, (
+        "the decision must be handled after the gate is cleared, not inside the "
+        "button conditional that drew it"
+    )

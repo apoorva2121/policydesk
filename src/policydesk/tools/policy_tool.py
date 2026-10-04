@@ -25,6 +25,21 @@ from ..rag.index import IndexMismatch, VectorIndex, load_index
 from ..rag.retrieve import retrieve
 from .base import Tool, ToolError, ToolResult
 
+# The model chooses how wide to search, but never narrower than this.
+#
+# Found by reading the trace of the injection demo: the planner asked for
+# `top_k: 1`, retrieval returned the single best passage, and the hostile vendor
+# addendum -- which sits at rank 2 for that very query -- was never fetched. The
+# quarantine never fired, the run refused for an unrelated reason, and the whole
+# thing looked like a successful defence while proving nothing.
+#
+# One passage is poor retrieval in general: no redundancy, and any question
+# resting on two rules silently loses one of them. `ge=1` on the field below
+# permitted it, because a schema bound describes what is *parseable*, not what is
+# *sensible*. Three is the floor: enough for a competing -- or hostile -- passage
+# to become visible rather than being cut off at rank 1.
+MINIMUM_TOP_K = 3
+
 
 class PolicySearchInput(BaseModel):
     query: str = Field(
@@ -76,7 +91,14 @@ class PolicySearchTool(Tool):
     def _execute(self, payload: BaseModel) -> ToolResult:
         assert isinstance(payload, PolicySearchInput)
 
-        results = retrieve(payload.query, self.index, self.llm, top_k=payload.top_k)
+        effective_k = max(payload.top_k, MINIMUM_TOP_K)
+        floor_note = (
+            f"; top_k raised {payload.top_k} -> {effective_k} (floor)"
+            if effective_k != payload.top_k
+            else ""
+        )
+
+        results = retrieve(payload.query, self.index, self.llm, top_k=effective_k)
 
         # Scan here, in the TOOL -- not only in the agent that consumes it.
         #
@@ -105,6 +127,7 @@ class PolicySearchTool(Tool):
             summary = "no matching passages found"
             if quarantined:
                 summary += f" ({len(quarantined)} quarantined as hostile)"
+            summary += floor_note
             return ToolResult(
                 ok=True,
                 tool=self.name,
@@ -115,6 +138,7 @@ class PolicySearchTool(Tool):
         summary = f"{len(results)} passage(s), best similarity {results[0].similarity:.3f}"
         if quarantined:
             summary += f"; {len(quarantined)} passage(s) quarantined as hostile"
+        summary += floor_note
 
         return ToolResult(
             ok=True,

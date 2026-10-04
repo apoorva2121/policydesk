@@ -33,3 +33,6 @@ study-progress.tmp
 Thumbs.db
 .DS_Store
 .vscode/
+
+# Playwright MCP snapshot output from browser-driven review sessions.
+.playwright-mcp/

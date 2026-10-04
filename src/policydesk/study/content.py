@@ -1895,7 +1895,7 @@ DRILL: tuple[DrillQuestion, ...] = (
         model_answer=(
             "Pick one and tell it with the **mechanism**, not just the symptom: what you "
             "expected, what happened, why, what you changed, and what general rule you took "
-            "away. Then stop — do not list all eleven.\n\n"
+            "away. Then stop — do not recite the whole list.\n\n"
             "The strongest shape is a bug that was invisible, where the thing you had built "
             "to prevent it was working correctly the whole time."
         ),
@@ -1910,7 +1910,16 @@ DRILL: tuple[DrillQuestion, ...] = (
             "A second one if they want range: a regex written with `\\b` in a non-raw Python "
             "string, where it is the **backspace** character. It compiled, looked correct, and "
             "matched nothing — and grep does not render the control character, so the source "
-            "looked fine."
+            "looked fine.\n\n"
+            "A third, if they push on security specifically: my prompt-injection quarantine "
+            "never ran during the demo meant to prove it. The planner had asked for "
+            "`top_k: 1`, and the hostile passage ranks **second** for that query — so it was "
+            "never retrieved, and there was nothing to quarantine. The run refused for an "
+            "unrelated reason and **looked like a successful defence.** The general rule: a "
+            "guardrail that only inspects what retrieval happened to return is switched off "
+            "by a narrower search, and the model chooses the width — so the width now has a "
+            "floor the model cannot go under. A passing demo that proves nothing is more "
+            "dangerous than a failing one, because nobody investigates it."
         ),
     ),
 )

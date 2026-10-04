@@ -828,6 +828,13 @@ def cmd_eval(label: str, category: str | None, limit: int | None, save: bool) ->
             if record.answer_preview:
                 print(f"               answered: {record.answer_preview[:110]}")
 
+    if report.is_replay:
+        print()
+        print("  REPLAY -- this run cost $0.00, so every response came from cache.")
+        print("  It replays an earlier run and cannot disagree with it, so it is NOT")
+        print("  an independent sample and cannot confirm a result. For a real second")
+        print("  sample:  LLM_CACHE_ENABLED=false policydesk eval --save")
+
     print()
     print("  What these numbers do NOT tell you:")
     print("    - recall says nothing about whether the answer USED what was found")

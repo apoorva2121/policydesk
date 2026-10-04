@@ -26,6 +26,7 @@ leaves, and Ctrl+C is handled rather than printing a traceback at you.
 from __future__ import annotations
 
 import os
+import re
 import sys
 import textwrap
 from dataclasses import dataclass
@@ -148,22 +149,158 @@ def subheading(text: str) -> None:
     rule()
 
 
-def paragraph(text: str, indent: str = "") -> None:
-    """Print prose wrapped to the terminal, keeping deliberate line breaks."""
-    for block in text.split("\n\n"):
-        cleaned = " ".join(block.split())
-        if not cleaned:
+BOLD_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
+CODE_RE = re.compile(r"`([^`]+)`")
+
+
+def render_inline(text: str) -> str:
+    """Turn **bold** and `code` into terminal styling rather than printing markers.
+
+    These docstrings are written in Markdown because they are also read on GitHub
+    and in an editor. In a terminal the raw asterisks are noise -- and there are
+    33 files of this to read, so the noise adds up.
+    """
+    # Every replacement below is a lambda returning group(1) explicitly, never a
+    # backreference STRING. A backreference that loses its backslash in transit
+    # becomes a literal control byte, so the matched text is replaced by an
+    # invisible character rather than kept -- which is exactly what happened here,
+    # silently, until the rendered output was actually read and bold words were
+    # found to be vanishing from the lesson.
+    if not S.bold:  # no colour support: strip the markers, keep the words
+        text = BOLD_RE.sub(lambda m: m.group(1), text)
+        return CODE_RE.sub(lambda m: m.group(1), text)
+    text = BOLD_RE.sub(lambda m: f"{S.bold}{m.group(1)}{S.reset}", text)
+    return CODE_RE.sub(lambda m: f"{S.cyan}{m.group(1)}{S.reset}", text)
+
+
+def visible_length(text: str) -> int:
+    """Length ignoring ANSI codes, so wrapping is not thrown off by styling."""
+    return len(re.sub(r"\[[0-9;]*m", "", text))
+
+
+def is_underline(line: str) -> bool:
+    """True for an RST-style underline: a run of - or = under a heading."""
+    stripped = line.strip()
+    return len(stripped) >= 3 and set(stripped) <= {"-", "="}
+
+
+def wrap_styled(text: str, *, first_indent: str, rest_indent: str) -> None:
+    """Style the text, then wrap it by VISIBLE width.
+
+    Two orderings are both wrong and I tried one of them. Wrapping first and
+    styling each finished line leaves any emphasis that straddles a line break
+    unmatched, so `**retrieved document**` kept its asterisks whenever the wrap
+    happened to fall between the two words. Styling first and wrapping with the
+    standard library counts the invisible escape codes as characters, so lines
+    come out short and ragged.
+
+    So: style the whole string first, then wrap it ourselves, measuring each word
+    by how much of it a reader can actually see.
+    """
+    styled = render_inline(safe(" ".join(text.split())))
+    if not styled.strip():
+        return
+
+    limit = WIDTH
+    indent = first_indent
+    current: list[str] = []
+    used = len(indent)
+
+    def emit() -> None:
+        nonlocal current, used, indent
+        if current:
+            print(indent + " ".join(current))
+        current = []
+        indent = rest_indent
+        used = len(indent)
+
+    for word in styled.split(" "):
+        if not word:
             continue
-        print(
-            textwrap.fill(
-                safe(cleaned),
-                width=WIDTH,
-                initial_indent=indent,
-                subsequent_indent=indent,
-                replace_whitespace=True,
-            )
-        )
+        width = visible_length(word)
+        extra = width if not current else width + 1
+        if current and used + extra > limit:
+            emit()
+            extra = width
+        current.append(word)
+        used += extra
+
+    emit()
+
+
+def is_list_item(line: str) -> bool:
+    stripped = line.lstrip()
+    return bool(re.match(r"^([-*]\s|\d+\.\s)", stripped))
+
+
+def paragraph(text: str, indent: str = "") -> None:
+    """Print prose wrapped to the terminal, keeping headings as headings.
+
+    Every module in this project opens with an RST-style docstring:
+
+        Why this file exists
+        --------------------
+        Settings come from environment variables...
+
+    Flowing that naively produced "Why this file exists -------------------- Settings
+    come from environment variables", which reads as broken formatting and buries the
+    structure the author put there deliberately. So an underlined line is recognised
+    and rendered as a heading instead of being swallowed into the paragraph.
+    """
+    lines = text.split("\n")
+    buffer: list[str] = []
+
+    def flush() -> None:
+        if not buffer:
+            return
+        joined = " ".join(" ".join(buffer).split())
+        buffer.clear()
+        if not joined:
+            return
+        wrap_styled(joined, first_indent=indent, rest_indent=indent)
         print()
+
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        following = lines[index + 1] if index + 1 < len(lines) else ""
+
+        if line.strip() and is_underline(following):
+            flush()
+            print(f"{indent}{S.bold}{safe(line.strip())}{S.reset}")
+            print(f"{indent}{S.dim}{'-' * min(len(line.strip()), WIDTH - len(indent))}{S.reset}")
+            index += 2
+            continue
+
+        if is_underline(line):  # an underline with no heading above it
+            index += 1
+            continue
+
+        if not line.strip():
+            flush()
+            index += 1
+            continue
+
+        # A list item, with its continuation lines absorbed so the hanging indent
+        # survives. Without this the second line of an item wraps back to the base
+        # indent and the list stops looking like a list.
+        if is_list_item(line):
+            flush()
+            item = [line.strip()]
+            index += 1
+            while index < len(lines):
+                nxt = lines[index]
+                if not nxt.strip() or is_list_item(nxt) or is_underline(nxt):
+                    break
+                item.append(nxt.strip())
+                index += 1
+            wrap_styled(" ".join(item), first_indent=indent + "  ", rest_indent=indent + "     ")
+            continue
+
+        buffer.append(line)
+        index += 1
+
+    flush()
 
 
 def bullet(text: str) -> None:

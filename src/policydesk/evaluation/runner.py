@@ -31,8 +31,19 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from ..config import Settings
+from ..tools.policy_tool import MINIMUM_TOP_K
 from .dataset import CASES, Category, EvalCase
 from .metrics import CaseResult
+
+# One case moving is this set's MEASURED noise floor, not a guess: two runs of an
+# identical configuration came back 18/22 and 19/22, recorded in
+# eval-runs/20261004T081622+0000-final.json and ...081943+0000-noise-check.json.
+#
+# So a change that moves a single case has demonstrated nothing, however flattering
+# the percentage looks -- and that applies just as much when the configuration DID
+# change, which is the case the verdict below originally waved through. Re-measure
+# this if the dataset grows.
+MEASURED_NOISE_FLOOR_CASES = 1
 
 
 class RunConfiguration(BaseModel):
@@ -47,6 +58,17 @@ class RunConfiguration(BaseModel):
     retrieval_top_k: int
     max_graph_loops: int
 
+    # The floor the agent's own top_k is clamped to. It lives in code, not in
+    # settings, and leaving it out of this fingerprint caused a real misreading:
+    # adding the floor moved two cases, and `compare()` reported "IDENTICAL
+    # CONFIGURATION -- nothing was changed", filing a genuine improvement as
+    # noise. A fingerprint has to cover everything that can change behaviour,
+    # not merely everything that happens to live in `.env`.
+    #
+    # The default is 1 because that is what the runs recorded before the floor
+    # existed, so those files still load and still compare honestly.
+    retrieval_floor: int = 1
+
     @classmethod
     def from_settings(cls, settings: Settings) -> RunConfiguration:
         return cls(
@@ -58,12 +80,13 @@ class RunConfiguration(BaseModel):
             answer_model=settings.answer_model,
             retrieval_top_k=settings.retrieval_top_k,
             max_graph_loops=settings.max_graph_loops,
+            retrieval_floor=MINIMUM_TOP_K,
         )
 
     def label(self) -> str:
         return (
             f"{self.chunk_strategy}/{self.chunk_size_chars} | {self.embedding_model} | "
-            f"{self.answer_model} | k={self.retrieval_top_k}"
+            f"{self.answer_model} | k={self.retrieval_top_k} | floor={self.retrieval_floor}"
         )
 
 
@@ -109,6 +132,21 @@ class EvalReport(BaseModel):
     @property
     def total_cost_usd(self) -> float:
         return sum(case.cost_usd for case in self.cases)
+
+    @property
+    def is_replay(self) -> bool:
+        """True when this run cost nothing, i.e. every response came from cache.
+
+        A trap this project walked into. The comparison tool said "re-run before
+        believing it", the eval was re-run, and it returned exactly the same score
+        -- which looked like confirmation and was nothing of the kind. The response
+        cache keys on the complete request, so an unchanged configuration replays
+        byte-identical answers. A replay can never disagree with the run it is
+        replaying, so it cannot confirm anything about noise.
+
+        To take a genuine second sample, run with `LLM_CACHE_ENABLED=false`.
+        """
+        return self.total > 0 and self.total_cost_usd == 0.0
 
     def mean(self, field_name: str) -> float | None:
         """Average a metric, skipping cases where it does not apply.
@@ -333,6 +371,12 @@ class Comparison(BaseModel):
                 f"{direction} by {self.delta:+.1%}, but {self.churn} case(s) moved in "
                 "total. With a set this small that is within noise: confirm by "
                 "re-running before acting on it"
+            )
+        if self.churn <= MEASURED_NOISE_FLOOR_CASES:
+            return (
+                f"{direction} by {self.delta:+.1%}, but only {self.churn} case(s) "
+                f"moved and {MEASURED_NOISE_FLOOR_CASES} case moving is this set's "
+                f"MEASURED noise floor. UNDEMONSTRATED -- re-run before believing it"
             )
         return f"{direction} by {self.delta:+.1%} with {self.churn} case(s) changed"
 
