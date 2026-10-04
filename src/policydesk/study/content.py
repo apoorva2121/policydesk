@@ -1436,8 +1436,8 @@ SESSIONS: tuple[Session, ...] = (
         title="Improve the weak spot",
         minutes=60,
         aim=(
-            "Cross-source questions pass 1 in 4. Now you have a way to tell whether you have "
-            "fixed it."
+            "Cross-source questions pass 1 to 2 of 4, and the same two fail every run. Now "
+            "you have a way to tell whether you have actually fixed it."
         ),
         steps=(
             Step(

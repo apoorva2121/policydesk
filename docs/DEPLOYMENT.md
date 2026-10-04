@@ -143,8 +143,10 @@ order it would have to be done.
     a product: no routing, a full re-run on every interaction, one user per process.
 13. **Index freshness.** Nothing notices when a policy document changes. No
     re-indexing schedule, no staleness metric, no cache invalidation (see above).
-14. **Answer quality.** The last measured pass rate is 86.4%, and cross-source
-    questions sit at 1 in 4. That number is in `docs/PROGRESS.md`, not hidden.
+14. **Answer quality.** The pass rate sits at 86.4-90.9% across runs, and
+    cross-source questions at 1 to 2 of 4. `cross-01` (a false positive on a
+    hotel that is within its limit) and `cross-03` fail in every run. The numbers
+    are in `docs/PROGRESS.md` and `eval-runs/`, not hidden.
 15. **A bigger evaluation set.** Twenty-two cases catch a regression. They cannot
     estimate a true accuracy, and nobody should quote them as if they could.
 

@@ -475,7 +475,8 @@ def render_status(st: Any, settings: Settings, progress: StudyProgress) -> None:
     st.divider()
     st.subheader("Known weaknesses, stated plainly")
     st.markdown(
-        "- **Cross-source questions pass about 1 in 4.** Measured, not hidden. "
+        "- **Cross-source questions pass 1 to 2 of 4** across four runs, and the "
+        "same two fail every time. Measured, not hidden. "
         "Session 5 is about attacking it.\n"
         "- **No authentication anywhere.** The blocking gap before any real deployment.\n"
         "- **Reranking is not implemented**, so there is no second-pass scoring of "

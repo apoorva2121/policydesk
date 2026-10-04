@@ -160,8 +160,9 @@ at 4.5× the cost. If you remember one thing from this project, make it that
 
 ## Session 5 — Improve the weak spot (60 min)
 
-Cross-source questions pass 1 in 4. That is the open problem, and now you have a
-way to tell whether you have fixed it.
+Cross-source questions pass 1 to 2 of 4, and `cross-01` and `cross-03` fail in
+every run. That is the open problem, and now you have a way to tell whether you
+have actually fixed it.
 
 Pick **one** hypothesis, change **one** thing, measure:
 
