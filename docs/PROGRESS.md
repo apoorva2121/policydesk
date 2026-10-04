@@ -643,6 +643,33 @@ are the most valuable thing in this repository.
 Plus two design corrections: the injection scan was in the agent rather than the
 tool (so MCP bypassed it), and evaluation results were stored as regenerable state.
 
+### Finding 1b: the comparison tool was flattering itself
+
+Running the noise-floor check produced the sharpest result of the whole project.
+Two runs of the **same** configuration, and `eval-compare` reported:
+
+```
+delta           +4.5%
+newly passing   cross-02
+cases moved     1
+Reading: better by +4.5% with 1 case(s) changed
+```
+
+Nothing had been changed. The tool had just congratulated me on noise, in a
+sentence I would have been happy to quote.
+
+A comparison tool that does that is **worse than no tool**, because it manufactures
+confidence. `compare` now detects an identical configuration and says so:
+
+```
+Reading: IDENTICAL CONFIGURATION -- nothing was changed. The +4.5% difference and
+the 1 case(s) that moved are the NOISE FLOOR of this set, not a result. Treat any
+future change smaller than 4.5% as undemonstrated.
+```
+
+Four runs of the same configuration now give a measured noise floor of **4.5%, one
+case.** That number is the admission price for every future claim about this system.
+
 ### Status
 
 All ten milestones complete. 261 tests passing. Total model spend across the entire

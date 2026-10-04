@@ -231,8 +231,15 @@ def test_a_comparison_reports_churn_not_just_the_delta() -> None:
     Four cases flipping each way nets to zero and means the system is unstable,
     not unchanged. A comparison that only prints the total hides that completely.
     """
+    from policydesk.evaluation.runner import RunConfiguration
+
     baseline = _report("before", {"a": True, "b": True, "c": False, "d": False})
     candidate = _report("after", {"a": False, "b": True, "c": True, "d": False})
+    # A DIFFERENT configuration, or the comparison correctly reports the noise
+    # floor instead of a churn verdict -- see the test below.
+    candidate.configuration = RunConfiguration(
+        **{**candidate.configuration.model_dump(), "chunk_strategy": "fixed"}
+    )
 
     result = compare(baseline, candidate)
 
@@ -365,3 +372,39 @@ def test_the_action_intent_gate_uses_real_word_boundaries() -> None:
     assert ACTION_INTENT.search("please escalate expense 1101")
     assert not ACTION_INTENT.search("What is the hotel limit in Tokyo?")
     assert not ACTION_INTENT.search("flagship product")  # the word boundary matters
+
+
+def test_comparing_two_runs_of_the_same_configuration_reports_the_noise_floor() -> None:
+    """A comparison tool that congratulates you on noise is worse than no tool.
+
+    This is a real result turned into a test. Two runs of the SAME configuration
+    came back at 81.8% and 86.4%, and `verdict()` reported "better by +4.5% with 1
+    case changed" -- flattering, and completely meaningless, since nothing had
+    been changed.
+    """
+    baseline = _report("run-1", {"a": True, "b": False, "c": True})
+    candidate = _report("run-2", {"a": True, "b": True, "c": True})
+
+    result = compare(baseline, candidate)
+
+    assert result.same_configuration is True
+    assert result.delta > 0  # it did "improve"
+    verdict = result.verdict()
+    assert "IDENTICAL CONFIGURATION" in verdict
+    assert "NOISE FLOOR" in verdict
+    assert "undemonstrated" in verdict
+
+
+def test_a_genuinely_different_configuration_is_compared_normally() -> None:
+    from policydesk.evaluation.runner import RunConfiguration
+
+    baseline = _report("mini", {"a": True, "b": False})
+    candidate = _report("large", {"a": True, "b": True})
+    candidate.configuration = RunConfiguration(
+        **{**candidate.configuration.model_dump(), "answer_model": "gpt-4o"}
+    )
+
+    result = compare(baseline, candidate)
+
+    assert result.same_configuration is False
+    assert "IDENTICAL CONFIGURATION" not in result.verdict()

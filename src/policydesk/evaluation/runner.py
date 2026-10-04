@@ -278,6 +278,9 @@ class Comparison(BaseModel):
     newly_passing: list[str] = Field(default_factory=list)
     newly_failing: list[str] = Field(default_factory=list)
     unchanged: int = 0
+    # True when both runs used the SAME configuration. Then the delta is not a
+    # result at all -- it is a direct measurement of the noise floor.
+    same_configuration: bool = False
 
     @property
     def delta(self) -> float:
@@ -293,7 +296,30 @@ class Comparison(BaseModel):
         return len(self.newly_passing) + len(self.newly_failing)
 
     def verdict(self) -> str:
-        """A plain-language reading, deliberately cautious about small deltas."""
+        """A plain-language reading, deliberately cautious about small deltas.
+
+        The first branch below exists because of a real result. Two runs of the
+        SAME configuration came back at 81.8% and 86.4%, and this function
+        cheerfully reported "better by +4.5% with 1 case changed" -- a flattering,
+        completely meaningless statement, since nothing had been changed.
+
+        A comparison tool that congratulates you on noise is worse than no tool,
+        because it manufactures confidence. So when the configurations match, the
+        delta is reported as what it actually is: the noise floor.
+        """
+        if self.same_configuration:
+            if self.churn == 0:
+                return (
+                    "identical configuration AND identical results. This set is "
+                    "stable on these cases"
+                )
+            return (
+                f"IDENTICAL CONFIGURATION -- nothing was changed. The {self.delta:+.1%} "
+                f"difference and the {self.churn} case(s) that moved are the NOISE "
+                f"FLOOR of this set, not a result. Treat any future change smaller "
+                f"than {abs(self.delta):.1%} as undemonstrated"
+            )
+
         if self.churn == 0:
             return "identical: no case changed verdict"
         if abs(self.delta) < 1e-9:
@@ -320,6 +346,7 @@ def compare(baseline: EvalReport, candidate: EvalReport) -> Comparison:
     return Comparison(
         baseline_label=f"{baseline.label} ({baseline.configuration.label()})",
         candidate_label=f"{candidate.label} ({candidate.configuration.label()})",
+        same_configuration=baseline.configuration == candidate.configuration,
         baseline_pass_rate=baseline.pass_rate,
         candidate_pass_rate=candidate.pass_rate,
         newly_passing=[cid for cid in shared if after[cid] and not before[cid]],
