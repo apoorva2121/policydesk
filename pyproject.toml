@@ -23,6 +23,9 @@ dependencies = [
     "tiktoken==0.14.0",                  # count tokens locally, before paying
     "chromadb==1.5.9",                   # local vector store
     "langchain-text-splitters==1.1.3",   # the recursive character splitter
+    # Milestone 4: the agent graph
+    "langgraph==1.2.12",                      # state machine with cycles + interrupts
+    "langgraph-checkpoint-sqlite==3.1.1",     # durable pauses, so approval can wait
 ]
 
 [dependency-groups]

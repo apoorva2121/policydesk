@@ -11,6 +11,11 @@ chunks         show how the documents were split into chunks (free)
 index          embed the chunks and build the vector index
 ask            ask a question over the indexed documents
 cache-clear    delete all cached model responses
+agent          ask the full agent: it plans, uses tools, verifies, and may pause
+approve        approve an action a paused agent proposed
+reject         reject an action a paused agent proposed
+queue          show the Finance Operations review queue
+diagram        print the orchestration diagram as Mermaid
 
 Every command is read-only with respect to your settings, prints what it did,
 and returns a process exit code (0 = fine). That last part matters: a command
@@ -480,6 +485,183 @@ def cmd_cache_clear() -> int:
 
 
 # ---------------------------------------------------------------------------
+# agent, approve, reject, queue, diagram  (Milestone 4)
+# ---------------------------------------------------------------------------
+
+
+def _print_run(run, show_trace: bool) -> None:
+    """Render one agent run: the answer, its sources, and optionally every step."""
+    state = run.state
+
+    print()
+    print("=" * 78)
+    if state.get("refused"):
+        print("ANSWER: I do not know.")
+        print(f"        Missing: {state.get('missing')}")
+    else:
+        print(state.get("answer") or "(no answer produced)")
+
+    citations = state.get("citations") or []
+    if citations:
+        print()
+        print("Sources used:")
+        for number, citation in zip(state.get("cited_numbers") or [], citations, strict=False):
+            print(f"  [{number}] {citation}")
+
+    evidence = state.get("evidence") or []
+    queries = [item.sql for item in evidence if getattr(item, "sql", None)]
+    if queries:
+        print()
+        print("Queries run (check these: they show how the question was understood):")
+        for sql in queries:
+            for line in sql.splitlines():
+                print(f"    {line}")
+
+    if state.get("verify_problem"):
+        print()
+        print(f"  Verification: {state['verify_problem']}")
+    elif state.get("verified") and not state.get("refused"):
+        print()
+        print("  Verification: passed (citations exist, amounts appear in the evidence)")
+
+    if state.get("action_result"):
+        print()
+        print(f"  Action: {state['action_result']}")
+
+    errors = state.get("errors") or []
+    if errors:
+        print()
+        print("Notes and failures along the way:")
+        for error in errors:
+            print(f"  - {error}")
+
+    if show_trace:
+        print()
+        print("-" * 78)
+        print("TRACE (every step, in order)")
+        for step, line in enumerate(state.get("trace") or [], start=1):
+            print(f"  {step:>2}. {line}")
+
+    print()
+    print("-" * 78)
+    print(f"Thread: {run.thread_id}")
+    print(f"Usage:  {run.usage}")
+
+
+def _print_pending(run) -> None:
+    """Show a proposed write and how to approve or reject it."""
+    action = run.state.get("pending_action")
+    print()
+    print("!" * 78)
+    print("THE AGENT HAS STOPPED AND IS WAITING FOR YOU")
+    print("!" * 78)
+    print()
+    print("It wants to perform an action that changes data. It has NOT done it.")
+    print()
+    if action is not None:
+        print(f"  Tool      : {action.tool}")
+        print(f"  Rationale : {action.rationale}")
+        print("  Arguments :")
+        for key, value in action.arguments.items():
+            print(f"      {key} = {value!r}")
+    print()
+    print("The whole run is saved to disk. Decide whenever you like:")
+    print(f"    policydesk approve {run.thread_id}")
+    print(f"    policydesk reject  {run.thread_id}")
+
+
+def cmd_agent(question: str, show_trace: bool, allow_actions: bool) -> int:
+    from .pipeline import run_agent
+    from .rag import IndexMismatch
+
+    settings = _load_settings_or_explain()
+    if settings is None:
+        return 1
+
+    configure_logging(settings)
+    try:
+        run = run_agent(question, settings, allow_actions=allow_actions)
+    except IndexMismatch as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        print(f"The agent failed: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"Q: {question}")
+    _print_run(run, show_trace)
+    if run.waiting_for_approval:
+        _print_pending(run)
+    return 0
+
+
+def cmd_decide(thread_id: str, approval: str, show_trace: bool) -> int:
+    from .pipeline import resume_agent
+
+    settings = _load_settings_or_explain()
+    if settings is None:
+        return 1
+
+    configure_logging(settings)
+    try:
+        run = resume_agent(thread_id, approval, settings)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        print(f"Could not resume: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"Decision recorded: {approval}")
+    _print_run(run, show_trace)
+    return 0
+
+
+def cmd_queue() -> int:
+    """Show the Finance Operations review queue."""
+    import json
+
+    settings = _load_settings_or_explain()
+    if settings is None:
+        return 1
+
+    path = settings.data_dir / "processed" / "review-queue.jsonl"
+    if not path.exists():
+        print("The review queue is empty (no file yet).")
+        return 0
+
+    entries = [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+    if not entries:
+        print("The review queue is empty.")
+        return 0
+
+    print(f"Review queue: {len(entries)} entry/entries  ({path})")
+    for entry in entries:
+        print()
+        print(
+            f"  expense {entry['expense_id']}  {entry['employee_name']}  "
+            f"{entry['category']}  USD {entry['amount_usd']}"
+        )
+        print(f"    reason   : {entry['reason']}")
+        print(f"    citation : {entry['policy_citation']}")
+        print(f"    flagged  : {entry['flagged_at']} by {entry['flagged_by']}")
+        print(f"    decision : {entry['decision']}")
+    return 0
+
+
+def cmd_diagram() -> int:
+    """Print the orchestration diagram as Mermaid."""
+    from .graph import mermaid_diagram
+
+    print("```mermaid")
+    print(mermaid_diagram().rstrip())
+    print("```")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # wiring
 # ---------------------------------------------------------------------------
 
@@ -519,6 +701,25 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub.add_parser("cache-clear", help="delete all cached model responses")
 
+    agent_parser = sub.add_parser("agent", help="ask the full agent (plans, uses tools, verifies)")
+    agent_parser.add_argument("question", help="the question, in quotes")
+    agent_parser.add_argument(
+        "--trace", action="store_true", help="print every step the agent took"
+    )
+    agent_parser.add_argument(
+        "--no-actions",
+        action="store_true",
+        help="read-only run: never propose an action that changes data",
+    )
+    approve_parser = sub.add_parser("approve", help="approve a paused agent action")
+    approve_parser.add_argument("thread_id", help="the thread id the agent printed")
+    approve_parser.add_argument("--trace", action="store_true")
+    reject_parser = sub.add_parser("reject", help="reject a paused agent action")
+    reject_parser.add_argument("thread_id", help="the thread id the agent printed")
+    reject_parser.add_argument("--trace", action="store_true")
+    sub.add_parser("queue", help="show the Finance Operations review queue")
+    sub.add_parser("diagram", help="print the orchestration diagram as Mermaid")
+
     args = parser.parse_args(argv)
 
     if args.command == "doctor":
@@ -539,6 +740,16 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_ask(args.question, show_chunks=args.show_chunks)
     if args.command == "cache-clear":
         return cmd_cache_clear()
+    if args.command == "agent":
+        return cmd_agent(args.question, args.trace, allow_actions=not args.no_actions)
+    if args.command == "approve":
+        return cmd_decide(args.thread_id, "approved", args.trace)
+    if args.command == "reject":
+        return cmd_decide(args.thread_id, "rejected", args.trace)
+    if args.command == "queue":
+        return cmd_queue()
+    if args.command == "diagram":
+        return cmd_diagram()
 
     parser.error(f"unknown command: {args.command}")
     return 2

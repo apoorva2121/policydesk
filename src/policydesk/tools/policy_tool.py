@@ -31,7 +31,13 @@ class PolicySearchInput(BaseModel):
         max_length=500,
         description="What to look for in the policy documents",
     )
-    top_k: int = Field(default=5, ge=1, le=20, description="How many passages to return")
+    top_k: int = Field(
+        default=6,
+        ge=1,
+        le=20,
+        description="How many passages to return. Use 8-10 for a broad question "
+        "that touches several rules at once.",
+    )
 
 
 class PolicySearchTool(Tool):

@@ -176,11 +176,22 @@ class ToolRegistry:
     def specs(self) -> list[dict[str, Any]]:
         return [self._tools[name].spec() for name in self.names()]
 
-    def describe_for_prompt(self) -> str:
-        """A compact list for the router's prompt."""
+    def read_only_names(self) -> list[str]:
+        """Tools that cannot change anything. The only ones a planner may use."""
+        return sorted(name for name, tool in self._tools.items() if tool.read_only)
+
+    def describe_for_prompt(self, read_only_only: bool = False) -> str:
+        """A compact list for the router's prompt.
+
+        `read_only_only=True` hides every tool that writes. The planner must never
+        be offered one: a write has exactly one permitted path, through human
+        approval, and advertising a second route invites the model to take it.
+        """
         lines = []
         for name in self.names():
             tool = self._tools[name]
+            if read_only_only and not tool.read_only:
+                continue
             flags = [] if tool.read_only else ["WRITES DATA"]
             if tool.requires_human_approval:
                 flags.append("NEEDS APPROVAL")
