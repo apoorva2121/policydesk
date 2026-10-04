@@ -6,6 +6,7 @@ doctor         check configuration and report readiness
 generate-data  build the sample policy PDFs, spreadsheet and database
 extract        read the sample files and show what came out, with locations
 inspect-db     show the database tables and a couple of example queries
+cost           estimate what the whole project will cost in model usage
 
 Every command is read-only with respect to your settings, prints what it did,
 and returns a process exit code (0 = fine). That last part matters: a command
@@ -231,6 +232,76 @@ def cmd_inspect_db() -> int:
 
 
 # ---------------------------------------------------------------------------
+# cost
+# ---------------------------------------------------------------------------
+
+
+def cmd_cost() -> int:
+    """Estimate what the whole project will cost in model usage."""
+    from .llm.estimate import (
+        CORPUS_TOKENS,
+        PIPELINE,
+        QUESTION_VOLUME,
+        SCENARIOS,
+        cost_per_question,
+        per_milestone,
+        project_total,
+        unknown_models,
+    )
+    from .llm.pricing import PRICES_SOURCE_URL, PRICES_VERIFIED_ON, price_age_warning
+
+    missing = unknown_models()
+    if missing:
+        print(f"No price recorded for: {', '.join(missing)}", file=sys.stderr)
+        return 1
+
+    print("PolicyDesk - project cost estimate")
+    print("=" * 72)
+    print(f"Prices verified {PRICES_VERIFIED_ON.isoformat()} from {PRICES_SOURCE_URL}")
+    warning = price_age_warning()
+    if warning:
+        print(f"WARNING: {warning}")
+    print()
+    print("Assumptions (all editable in src/policydesk/llm/estimate.py):")
+    print(f"  corpus size            ~{CORPUS_TOKENS:,} tokens (measured from our files)")
+    print(f"  question-runs total     {sum(QUESTION_VOLUME.values()):,} across milestones 2-9")
+    print(f"  pipeline steps          {len(PIPELINE)} model calls per question")
+    print()
+
+    for scenario in SCENARIOS:
+        totals = project_total(scenario)
+        grand = sum(totals.values())
+        per_q = sum(cost_per_question(scenario).values())
+
+        print("-" * 72)
+        print(f"{scenario.name}")
+        print(
+            f"  models: cheap={scenario.cheap_model}  strong={scenario.strong_model}  "
+            f"judge={scenario.judge_model}"
+        )
+        print(f"  {scenario.note}")
+        print()
+        print(f"  cost per question     ${per_q:.5f}   ({per_q * 100:.3f} cents)")
+        for label, amount in totals.items():
+            print(f"  {label:<22} ${amount:>8.2f}")
+        print(f"  {'PROJECT TOTAL':<22} ${grand:>8.2f}")
+        print()
+
+    recommended = SCENARIOS[0]
+    print("=" * 72)
+    print(f"Per-milestone breakdown for {recommended.name}:")
+    for milestone, amount in per_milestone(recommended).items():
+        print(f"  {milestone:<42} ${amount:>7.2f}")
+    print()
+    print("These are estimates from stated assumptions, not measurements. From")
+    print("Milestone 2 the CostLedger records real spend, which overrides all of this.")
+    print()
+    print("Set a hard monthly usage limit in your OpenAI dashboard as well. That")
+    print("limit cannot be bypassed by a bug in our code; ours can.")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # wiring
 # ---------------------------------------------------------------------------
 
@@ -250,6 +321,7 @@ def main(argv: list[str] | None = None) -> int:
         help="how many extracted blocks to preview per file (default 3)",
     )
     sub.add_parser("inspect-db", help="show the database contents and example queries")
+    sub.add_parser("cost", help="estimate the model cost of the whole project")
 
     args = parser.parse_args(argv)
 
@@ -261,6 +333,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_extract(show_blocks=args.show)
     if args.command == "inspect-db":
         return cmd_inspect_db()
+    if args.command == "cost":
+        return cmd_cost()
 
     parser.error(f"unknown command: {args.command}")
     return 2

@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     max_graph_loops: int = Field(default=2, ge=0, le=5)
     request_timeout_s: float = Field(default=30.0, gt=0, le=300)
     sql_row_limit: int = Field(default=200, ge=1, le=10_000)
+    # A seatbelt, not a guarantee: it only stops calls that go through our
+    # CostLedger. The hard limit is the usage cap set in the OpenAI dashboard.
+    max_spend_usd_per_run: float = Field(default=1.00, gt=0, le=1_000)
 
     # ---------- Paths ----------
     data_dir: Path = PROJECT_ROOT / "data"
@@ -127,6 +130,7 @@ class Settings(BaseSettings):
             "max_graph_loops": self.max_graph_loops,
             "max_input_chars": self.max_input_chars,
             "sql_row_limit": self.sql_row_limit,
+            "max_spend_usd_per_run": self.max_spend_usd_per_run,
             "request_timeout_s": self.request_timeout_s,
             "data_dir": str(self.data_dir),
             "vector_store_dir": str(self.vector_store_dir),

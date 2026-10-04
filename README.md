@@ -88,6 +88,7 @@ $env:APP_ENV="test"
 | Build the sample data | `.venv\Scripts\python.exe -m policydesk.cli generate-data` |
 | See what extraction produced | `.venv\Scripts\python.exe -m policydesk.cli extract` |
 | Look inside the database | `.venv\Scripts\python.exe -m policydesk.cli inspect-db` |
+| Estimate the project's model cost | `.venv\Scripts\python.exe -m policydesk.cli cost` |
 | Run tests | `.venv\Scripts\python.exe -m pytest` |
 | Lint | `.venv\Scripts\python.exe -m ruff check .` |
 | Auto-format | `.venv\Scripts\python.exe -m ruff format .` |
@@ -100,6 +101,23 @@ $env:APP_ENV="test"
 | `ModuleNotFoundError: No module named 'policydesk'` | Package not installed into the venv | `uv pip install -e .` |
 | Tests fail asking for a key | Something set `APP_ENV` in your shell | Open a new terminal; tests force `APP_ENV=test` themselves |
 | `uv: command not found` | `uv` is not on PATH | `pip install uv`, or use `python -m pip install -e .` instead |
+
+## What this costs to run
+
+Run `policydesk cost` for the current estimate with all assumptions shown.
+
+As of 4 October 2026, using mini models throughout: **about $3 for the entire
+project**, of which roughly two thirds is the evaluation milestone re-running its
+question set. Switching the answer and verification steps to `gpt-4o` raises that
+to about $31 — which is exactly why we measure the quality difference before
+deciding it is worth paying for.
+
+Two separate protections:
+
+1. `MAX_SPEND_USD_PER_RUN` in `.env` stops a single run that goes over budget.
+   This is a seatbelt for *our* code, and a bug could get around it.
+2. A monthly usage limit set in your OpenAI dashboard. This one cannot be
+   bypassed by anything we write. **Set it.** $10 is more than enough here.
 
 ## Honest limitations
 
