@@ -148,3 +148,51 @@ without being grounded, which is why Milestone 4 adds a verification step.
 **Prompt injection** -- text inside a retrieved document that tries to give the
 model instructions. Telling the model to ignore it helps but is **not** a security
 boundary.
+
+
+## Tools and SQL safety (Milestone 3)
+
+**Tool** -- a function the model may ask for. The model chooses *when*; your code
+controls *what is possible*. Every real protection is on your side.
+
+**Tool allow-list / registry** -- the set of tools that exist in a run. A model
+cannot call anything outside it. This is a control; telling the model which tools
+exist is not.
+
+**Input schema** -- a declared shape for a tool's input, validated before the tool
+body runs, so a tool never sees input it did not ask for.
+
+**Failure as data** -- returning `ok=False` with a reason instead of raising, so an
+agent can see the failure and decide what to do next.
+
+**Safe error vs internal detail** -- the user-facing reason, versus the raw cause
+(paths, passwords, rejected SQL) which is logged and never shown.
+
+**Text-to-SQL** -- turning a natural-language question into a database query. The
+model writes the query; the database does the arithmetic.
+
+**SQL authorizer** -- a callback SQLite invokes to approve each operation it is
+about to perform, by type and table. It does not parse strings, so clever SQL
+cannot evade it. Default-deny.
+
+**Read-only connection** -- opening the database file `mode=ro`, so writes are
+impossible at the operating-system level.
+
+**Default-deny** -- refuse anything not explicitly permitted, rather than allowing
+anything not explicitly forbidden. The only safe default.
+
+**Allow-list vs deny-list** -- an allow-list names what is permitted (short, safe);
+a deny-list names what is forbidden (always incomplete).
+
+**Business glossary (semantic layer)** -- notes in the prompt mapping how people
+speak ("travel spend", "T&E") to what the schema holds. Without it the model
+invents filters that match nothing.
+
+**Suspicious result** -- an empty or all-NULL result, reported as doubtful rather
+than as an answer, because it is also exactly what a wrong filter looks like.
+
+**CTE (common table expression)** -- a `WITH name AS (...)` block naming an
+intermediate result inside one query. Not a table.
+
+**Known-answer test** -- a test whose expected value you computed yourself,
+independently of the code. The only kind that catches a subtle regression.

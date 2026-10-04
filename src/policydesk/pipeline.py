@@ -23,6 +23,7 @@ from .rag import (
     load_index,
     retrieve,
 )
+from .tools import ToolRegistry
 
 
 def make_client(settings: Settings) -> LLMClient:
@@ -34,6 +35,27 @@ def make_client(settings: Settings) -> LLMClient:
             directory=settings.data_dir / "processed" / "llm-cache",
             enabled=settings.llm_cache_enabled,
         ),
+    )
+
+
+def make_registry(settings: Settings, llm: LLMClient) -> ToolRegistry:
+    """Every tool available in one run. This set IS the allow-list.
+
+    A model can ask for a tool only if it is registered here. Anything else comes
+    back as a clear failure rather than an attempt.
+    """
+    from .tools import PolicySearchTool, SqlQueryTool
+
+    return ToolRegistry(
+        [
+            PolicySearchTool(settings, llm),
+            SqlQueryTool(
+                settings.sqlite_path,
+                llm,
+                row_limit=settings.sql_row_limit,
+                timeout_seconds=settings.request_timeout_s,
+            ),
+        ]
     )
 
 

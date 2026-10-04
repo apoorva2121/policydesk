@@ -88,8 +88,8 @@ yourself, because your judgement matters more than boilerplate there.
 | 0 | Skeleton, config, secrets, logging, tests | Why layout and secret handling come first | done |
 | 1 | Sample data + PDF/Excel extraction with metadata | Why page/sheet/row metadata is what makes citations possible | done |
 | 2 | Plain RAG baseline, chunk inspector, "I do not know" | **When plain RAG is enough** | done |
-| 3 | Tools: text-to-SQL + policy lookup ✍️ SQL validator rules | Tool contracts; numbers never come from the model | next |
-| 4 | LangGraph: state, router, bounded retry loop, interrupt ✍️ router policy | State machines vs chains vs free-running agents | |
+| 3 | Tools: text-to-SQL + policy lookup | Tool contracts; numbers never come from the model | done |
+| 4 | LangGraph: state, router, bounded retry loop, interrupt ✍️ router policy | State machines vs chains vs free-running agents | next |
 | 5 | Guardrails + red-team tests | Why a prompt is not a security boundary | |
 | 6 | MCP server + client | Protocol vs in-process function calling | |
 | 7 | Evaluation: Recall@k, MRR, groundedness, citation and tool-choice checks ✍️ eval set | What each metric does and does not tell you | |

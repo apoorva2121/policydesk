@@ -316,3 +316,144 @@ depend on*. Information thrown away at ingestion cannot be recovered downstream.
 Milestone 3 — tools. A read-only text-to-SQL tool over the expense database, so
 the two refused questions above become answerable. Numbers will come from a query,
 never from the model.
+
+
+---
+
+## 2026-10-04 — Milestone 3: tools, text-to-SQL, and four layers of safety
+
+**Status:** done and verified against the real API.
+
+### The headline result
+
+The two questions Milestone 2 had to refuse are now answerable:
+
+| Question | Milestone 2 | Milestone 3 |
+| --- | --- | --- |
+| Engineering's Q3 2026 travel spend | refused | **$1,464.80**, from a real SQL query (verified by hand against the seeded rows) |
+| Priya's October expenses | refused | **7 rows** with id, date, category, amount, country, receipt flag, approval ref |
+
+The cross-source question ("which of Priya's expenses break policy?") still cannot
+be answered by either tool alone — and that is correct. Asked as two sub-questions,
+both tools answer perfectly. Combining them is the planner's job, in Milestone 4.
+
+### What was built
+
+| File | Purpose |
+| --- | --- |
+| `tools/base.py` | The tool contract: input schema, read-only flag, approval flag, `ToolResult` where failure is data, and `ToolRegistry` as the allow-list |
+| `tools/sql_safety.py` | The four safety layers, the row limit, the time limit, and schema description |
+| `tools/sql_tool.py` | Question → SQL → validated execution → rows, plus a plain-language explanation and suspicious-result detection |
+| `tools/policy_tool.py` | The RAG retriever, wrapped as a tool so the agent can choose it |
+| `tests/test_sql_safety.py` | 28 red-team tests |
+| `tests/test_tools.py` | 22 contract tests |
+
+### The four safety layers, weakest to strongest
+
+1. **The prompt** — asks for a read-only SELECT. Good for quality, **worth zero as
+   security**. Listed first so its place is unmistakable.
+2. **Static validation** — one statement only, comments stripped first, forbidden
+   keywords, table allow-list, enforced LIMIT. Gives *good error messages*; string
+   checks can always be outwitted.
+3. **A SQLite authorizer callback** — the database asks our function to approve
+   every operation, by type and by table, as it prepares the statement. No string
+   parsing is involved, so no cleverness in the SQL can evade it. **This is the
+   layer that holds.** Default-deny: an unrecognised operation code is refused.
+4. **A read-only connection** (`mode=ro`) — a write is impossible at the OS level
+   even if layers 2 and 3 both failed. There is a test that bypasses all our own
+   validation and confirms the write still fails.
+
+Layers 3 and 4 are the defence. Never present layer 1 or 2 as the protection.
+
+### Three real failures found while building, and what each taught
+
+**1. The schema did not say what values a column could hold.**
+Asked for Engineering's Q3 *travel* spend, the model replied `CANNOT_ANSWER`. It
+could see a `category` column but had no idea whether "travel" was one of its
+values. (It is not: the values are airfare, hotel, meals, ground_transport, and
+so on.)
+
+Fix: `describe_schema` now lists the distinct values of every low-cardinality text
+column. This is the cheapest and largest single improvement available to
+text-to-SQL reliability, and it is nearly always missing from a first attempt.
+High-cardinality columns like `merchant` are deliberately excluded.
+
+**2. Safe and correct are different problems.**
+With the values listed, the model wrote a query that was *perfectly safe, perfectly
+valid* — and wrong. It filtered `category = 'travel'`, which matches nothing, and
+returned `None`. Every safety layer worked exactly as designed, and the answer was
+still wrong. Reported as "they spent nothing", it would have been believed.
+
+Fix: a `describe_suspicious_result` check. An empty result, or a single-row
+aggregate that is all NULL, is reported as **suspicious** rather than as an answer
+— alongside the SQL, so a human spots the bad filter in seconds. Plus a short
+business glossary in the prompt mapping how people speak ("travel spend", "T&E")
+to what the schema actually holds. Zero is a real answer; NULL is an absent one,
+and the two must never be confused.
+
+**3. Two bugs caught by my own tests, not by reading the code.**
+- `WITH totals AS (...) SELECT * FROM totals` was **rejected**: `totals` looked
+  like a table that is not allow-listed. It is not a table at all. Rejecting CTEs
+  would have quietly crippled every two-step question.
+- **Truncation was undetectable.** We appended `LIMIT 200` and then tried to detect
+  truncation by fetching 201 rows — which SQLite could never return, having just
+  been told to stop at 200. A partial result would have been presented as complete.
+  Fix: ask for one row more than you intend to keep. That is how you tell "exactly
+  200 rows" from "at least 200".
+
+### Decisions and why
+
+1. **Numbers come from the database, never from the model.** The model writes the
+   query; SQLite does the arithmetic. This is the single most important design
+   decision in any analytics assistant.
+2. **The user is shown the SQL and a plain-language explanation of it.** "Q3" might
+   be calendar or fiscal; "travel spend" might include conference fees. Showing the
+   query makes the interpretation checkable in two seconds.
+3. **Tool failures are data, not exceptions.** An agent must be able to see a
+   failure and choose what to do next. A raised exception kills the run and hands
+   the user a stack trace.
+4. **`error` is safe; `internal_detail` is for logs.** A raw exception can contain a
+   password, a path, or the rejected query. Echoing a rejected query back is how an
+   attacker learns your schema. Two tests enforce the split.
+5. **The registry IS the allow-list.** A model can only ask for a registered tool.
+   An unknown name returns a clear failure naming the tools that do exist.
+6. **Input validated against a schema before the tool body runs**, so a tool never
+   sees input it did not ask for.
+7. **A wall-clock deadline via SQLite's progress handler.** SQLite has no query
+   timeout of its own for a query that is making progress.
+8. **Tool descriptions state what each tool does NOT know.** `sql_query` says it
+   does not know the policy rules; `policy_search` says it has no expense records.
+   Those two sentences are what let a cheap model route correctly.
+
+### Interview questions this milestone answers
+
+- "How do you make text-to-SQL safe?" → four layers, named weakest to strongest,
+  and clear about which two actually hold.
+- "Why not just tell the model to only write SELECTs?" → because a prompt is not a
+  security boundary; the authorizer and the read-only connection are.
+- "What goes wrong with text-to-SQL even when it is safe?" → the `category =
+  'travel'` story: valid, permitted, empty, wrong. Safe ≠ correct.
+- "How would you improve text-to-SQL reliability cheapest-first?" → list column
+  values in the schema, add a business glossary, show the SQL, flag empty results,
+  then known-answer tests.
+- "How do you design a tool for an agent?" → name, description including what it
+  cannot do, validated input schema, failure as data, safe error vs internal detail,
+  read-only and approval flags.
+
+### Honest limitations
+
+- Static validation is regex-based, not a real SQL parser. That is tolerable only
+  because layers 3 and 4 do not depend on it.
+- The tool cannot answer a question needing both sources. By design — the planner
+  decomposes, in Milestone 4.
+- The model still sometimes refuses answerable questions (`CANNOT_ANSWER` on
+  "which expenses break policy?"). Acceptable: the planner rephrases.
+- No query result caching yet, so an identical question re-runs the SQL. Cheap here.
+- Allow-listed tables are hard-coded, not per-user. Real row-level security would
+  filter by the signed-in user at the database level, never in the prompt.
+
+### Next
+
+Milestone 4 — LangGraph. A router that picks tools, a planner that decomposes the
+cross-source question, a bounded retry loop, a verification step, and a human
+approval interrupt before any consequential action.

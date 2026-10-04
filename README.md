@@ -46,8 +46,9 @@ Every other term is in `docs/GLOSSARY.md`.
 | 0. Project skeleton, config, secrets, logging, tests | **done** |
 | 1. Sample data + PDF/Excel extraction | **done** |
 | 2. Plain RAG baseline (chunking, embeddings, citations, refusal) | **done** |
-| 3. Tools and text-to-SQL | next |
-| 4–10 | see `docs/PLAN.md` |
+| 3. Tools, text-to-SQL, four safety layers | **done** |
+| 4. LangGraph orchestration (router, planner, retry loop, approval) | next |
+| 5–10 | see `docs/PLAN.md` |
 
 ## Setup from a clean machine
 
