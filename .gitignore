@@ -1,0 +1,22 @@
+# --- Secrets: the single most important line in this file ---
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Generated data (regenerable from scripts; never commit indexes or DBs)
+data/processed/
+data/raw/*
+!data/raw/.gitkeep
+
+# OS / editor
+Thumbs.db
+.DS_Store
+.vscode/
