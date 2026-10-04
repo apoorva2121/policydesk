@@ -25,6 +25,22 @@ of the system into existence:
 
 ## Target architecture
 
+> **This is the plan, written before the system was built, and it is kept as the
+> plan.** The graph that got built differs from it in five places, and the
+> differences are more instructive than the plan. For the diagram of what actually
+> runs: `policydesk diagram`. It lives in `graph/build.py`, hand-written so each
+> edge can say *why* it exists, and a test checks every edge against the routing
+> functions' declared returns so it cannot quietly drift again.
+>
+> | Planned here | Built instead | Why |
+> | --- | --- | --- |
+> | A separate `router` node | The `plan` node chooses tools | A router that picks sources and a planner that picks tool arguments were the same decision made twice |
+> | A `rewrite_query` node | Edge back to `plan`, `attempts += 1` | The planner already decides what to search for; a second place to do it would drift from the first |
+> | `grade_evidence`: out of attempts → "I do not know" | Out of attempts → `compose` | The grader kept judging good evidence insufficient. Two components must not hold the same veto; the composer refuses honestly and the verifier checks it |
+> | `verify` fail → refuse | One bounded rewrite, then refuse | The complaint is specific ("this amount is not in the evidence"), so it is worth one more attempt -- but only one |
+> | `guard_input`: "rate limit" | A per-run tool-call budget in `gather` | Never a per-caller rate limit. `CallBudget` stops cheap runaway loops, which is a different problem; per-caller limiting needs authentication, which this project does not have |
+
+
 ```mermaid
 flowchart TD
     A([User question]) --> B[guard_input<br/>size, injection scan, rate limit]

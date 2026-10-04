@@ -677,3 +677,88 @@ def test_idempotency_is_keyed_on_the_expense_not_on_model_text(
     assert first.data["duplicate"] is False
     assert second.data["duplicate"] is True, "different wording, same finding, one entry"
     assert len(tool.existing_entries()) == 1
+
+
+def test_the_diagram_matches_the_routing_functions() -> None:
+    """The picture drifted from the code, at the two edges that matter most.
+
+    It showed "out of attempts" going to `finalize` and a failed verification going
+    straight to `finalize`. Both were true once; both had been deliberately changed
+    (the grader must not hold the composer's veto, and a failed verification earns
+    one bounded rewrite). So the diagram contradicted the code precisely at the two
+    decisions worth understanding, and hid BOTH cycles -- the thing that makes this
+    an agent rather than a pipeline.
+
+    A hand-drawn diagram is worth keeping: the generated one shows nodes but not why
+    each edge exists. It just must not be allowed to lie. So every edge leaving a
+    decision node is checked against that router's declared `Literal` returns, which
+    is the code's own statement of where it can go.
+    """
+    import re
+    import typing
+
+    from policydesk.graph.build import mermaid_diagram, route_after_grade, route_after_verify
+
+    diagram = mermaid_diagram()
+
+    # The letters the diagram uses for each real node name.
+    node_of = {
+        "P": "plan",
+        "GA": "gather",
+        "GR": "grade",
+        "C": "compose",
+        "V": "verify",
+        "PA": "propose_action",
+        "EA": "execute_action",
+        "F": "finalize",
+    }
+
+    def destinations(source: str) -> set[str]:
+        """Every node the diagram says you can reach directly from `source`."""
+        found = set()
+        for line in diagram.splitlines():
+            match = re.match(rf"\s*{source}\s*-->\s*(?:\|[^|]*\|)?\s*([A-Z]+)", line.strip())
+            if match and match.group(1) in node_of:
+                found.add(node_of[match.group(1)])
+        return found
+
+    for source, router in (("GR", route_after_grade), ("V", route_after_verify)):
+        declared = set(typing.get_args(typing.get_type_hints(router)["return"]))
+        drawn = destinations(source)
+        assert drawn == declared, (
+            f"the diagram sends {source} to {sorted(drawn)} but "
+            f"{router.__name__} returns {sorted(declared)}"
+        )
+
+    # Both cycles must be visible, because they are the whole point.
+    assert "compose" in destinations("V"), "the rewrite cycle is missing from the picture"
+    assert "plan" in destinations("GR"), "the search cycle is missing from the picture"
+
+
+def test_the_diagram_has_no_broken_node_labels() -> None:
+    """A node label split across source lines draws with a stray blank line in it.
+
+    The HALT node was written across two source lines, so its label contained a real
+    newline as well as its `<br/>`. Checked in a browser rather than assumed, which
+    corrected the guess: Mermaid renders it perfectly happily, but the newline
+    becomes an extra line break, so the node came out as
+    `GRAPH STOPS<br>state saved to disk<br><br>human approves or rejects` -- an
+    empty line inside the box. Cosmetic rather than fatal.
+
+    Worth a test anyway, because it is invisible in the source: the wrapped line
+    looks like ordinary formatting, and the only clue is in the rendered picture.
+    Line breaks inside a label go in as `<br/>`; a newline belongs between
+    statements.
+    """
+    from policydesk.graph.build import mermaid_diagram
+
+    for line in mermaid_diagram().splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        for opening, closing in (("[", "]"), ("{{", "}}"), ("{", "}"), ("([", "])")):
+            if opening in stripped:
+                assert stripped.count(opening) == stripped.count(closing), (
+                    f"unbalanced {opening}{closing} -- a node label is split across "
+                    f"source lines, which puts a real newline inside it: {stripped!r}"
+                )

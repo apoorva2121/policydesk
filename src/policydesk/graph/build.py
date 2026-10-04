@@ -313,26 +313,45 @@ def mermaid_diagram() -> str:
 
     Written by hand rather than generated, because the generated version shows the
     nodes but not *why* each edge exists, and the why is the part worth reading.
+
+    Hand-written also means it can drift, and it did: it showed "out of attempts"
+    going to `finalize` and verification failure going straight to `finalize`. Both
+    were true once, and both had been deliberately changed -- so the picture
+    contradicted the code at exactly the two decisions worth understanding, and
+    hid BOTH cycles that make this an agent rather than a pipeline.
+
+    `test_the_diagram_matches_the_routing_functions` now compares every edge out of
+    a decision node against that router's declared return values, so the drift
+    cannot happen again quietly.
+
+    The HALT label is terse for a reason: it was once a line over the 100-character
+    limit, so it got wrapped -- which put a real newline inside a Mermaid label.
+    Checked in a browser rather than assumed: Mermaid still renders it, but the
+    newline becomes an extra line break, so the node draws with a stray blank line
+    in it (`GRAPH STOPS<br>state saved to disk<br><br>human approves or rejects`).
+    Cosmetic, then, not fatal. When a line-length rule and a one-line syntax
+    disagree, shorten the text rather than folding the line.
     """
     return """flowchart TD
     START([question]) --> G[guard_input<br/>size - injection scan]
     G -->|rejected| F[finalize]
     G -->|accepted| P[plan<br/>which tools, what arguments<br/>attempts += 1]
     P --> GA[gather<br/>run the tool calls<br/>no model call here]
-    GA --> GR{grade<br/>is this enough?}
+    GA --> GR{grade<br/>is another search worth doing?}
 
     GR -->|insufficient<br/>attempts left| P
-    GR -->|insufficient<br/>out of attempts| F
+    GR -->|insufficient<br/>out of attempts| C
     GR -->|not_in_scope| F
-    GR -->|sufficient| C[compose<br/>answer with citations]
+    GR -->|sufficient| C[compose<br/>answer with citations<br/>or INSUFFICIENT_EVIDENCE]
 
     C --> V{verify<br/>citations real?<br/>amounts in evidence?<br/>no model call}
-    V -->|failed| F
+    V -->|failed<br/>rewrites left| C
+    V -->|failed<br/>out of rewrites| F
+    V -->|refused| F
     V -->|passed| PA[propose_action]
 
     PA -->|nothing to flag| F
-    PA -->|action proposed| HALT{{GRAPH STOPS<br/>state saved to disk
-    <br/>human approves or rejects}}
+    PA -->|action proposed| HALT{{GRAPH STOPS<br/>state saved<br/>human decides}}
     HALT -->|approved| EA[execute_action<br/>write to review queue]
     HALT -->|rejected| F
     EA --> F
