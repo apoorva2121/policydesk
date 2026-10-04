@@ -79,3 +79,33 @@ every test automatically.
 
 **Idempotent** — running it twice has the same effect as running it once. Useful
 for data pipelines, so a retry cannot create duplicates.
+
+## Document extraction (Milestone 1)
+
+**Text layer** -- the real characters stored inside a PDF. A normal PDF has one;
+a scanned PDF does not, so extraction returns nothing at all.
+
+**OCR (Optical Character Recognition)** -- reading characters out of a picture of
+text. Needed for scanned documents. It is a separate step with its own error
+rate, so OCR output should be treated as less trustworthy than a real text layer.
+
+**Block** -- in this project, one citable piece of extracted content: a page of
+PDF text, one PDF table, or one spreadsheet row. Blocks are bigger than a
+sentence and smaller than a document.
+
+**Locator** -- the short location string inside a source, such as `p.3` or
+`October 2026!row 7`.
+
+**Citation** -- the full pointer shown to a user: `travel-policy.pdf (p.3)`.
+
+**Header detection** -- working out which spreadsheet row holds the column names,
+instead of assuming it is row 1. Real spreadsheets have titles and notes above
+the table.
+
+**Cached formula value** -- the last result Excel calculated for a formula cell.
+A file written by a script has none, so the cell reads as *empty*, not as zero.
+Mistaking that for zero produces a confident wrong answer.
+
+**Deterministic** -- same input, same output, every time. Our sample data is
+deterministic on purpose: an evaluation score you cannot reproduce is not a
+measurement.

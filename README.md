@@ -44,8 +44,9 @@ Every other term is in `docs/GLOSSARY.md`.
 | Milestone | Status |
 | --- | --- |
 | 0. Project skeleton, config, secrets, logging, tests | **done** |
-| 1. Sample data + PDF/Excel extraction | in progress |
-| 2–10 | see `docs/PLAN.md` |
+| 1. Sample data + PDF/Excel extraction | **done** |
+| 2. Plain RAG baseline | next |
+| 3–10 | see `docs/PLAN.md` |
 
 ## Setup from a clean machine
 
@@ -84,6 +85,9 @@ $env:APP_ENV="test"
 | What you want | Command (PowerShell) |
 | --- | --- |
 | Health check | `.venv\Scripts\python.exe -m policydesk.cli doctor` |
+| Build the sample data | `.venv\Scripts\python.exe -m policydesk.cli generate-data` |
+| See what extraction produced | `.venv\Scripts\python.exe -m policydesk.cli extract` |
+| Look inside the database | `.venv\Scripts\python.exe -m policydesk.cli inspect-db` |
 | Run tests | `.venv\Scripts\python.exe -m pytest` |
 | Lint | `.venv\Scripts\python.exe -m ruff check .` |
 | Auto-format | `.venv\Scripts\python.exe -m ruff format .` |

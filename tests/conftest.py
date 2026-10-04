@@ -6,6 +6,8 @@ This file makes both guarantees for every test automatically.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from policydesk.config import Settings, get_settings
@@ -36,3 +38,17 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def settings() -> Settings:
     """A plain test-mode Settings object, ignoring any .env on disk."""
     return Settings(app_env="test", _env_file=None)
+
+
+@pytest.fixture(scope="session")
+def sample_data(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
+    """Generate the whole sample dataset once, into a throwaway folder.
+
+    scope="session" means it is built one time for the entire test run, not once
+    per test. Generating PDFs is slow enough that this matters.
+    """
+    from policydesk.sample_data import generate_all
+
+    root = tmp_path_factory.mktemp("sample")
+    data_dir = root / "data"
+    return generate_all(data_dir, data_dir / "processed" / "policydesk.db")
