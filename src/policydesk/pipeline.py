@@ -188,6 +188,46 @@ def run_agent(
     )
 
 
+def saved_thread_status(settings: Settings, thread_id: str) -> str:
+    """Is there a saved run with this id, and is it waiting? Reads state only.
+
+    Deliberately does NOT build a model client. This exists because of a bug a test
+    caught: `resume_agent` created the client first, so asking about an unknown
+    thread with no API key configured raised a credentials error and the API
+    returned 500 where it should have returned 404.
+
+    The general rule: validate the request before constructing anything expensive
+    or credentialed. Reading a checkpoint needs no model, so it should not require
+    one.
+    """
+    import sqlite3
+
+    from langgraph.checkpoint.sqlite import SqliteSaver
+
+    from .graph.build import make_serde
+
+    path = settings.data_dir / "processed" / "agent-checkpoints.sqlite"
+    if not path.exists():
+        return "missing"
+
+    connection = sqlite3.connect(str(path), check_same_thread=False)
+    try:
+        saver = SqliteSaver(connection, serde=make_serde())
+        checkpoint = saver.get_tuple({"configurable": {"thread_id": thread_id}})
+        if checkpoint is None:
+            return "missing"
+        pending = getattr(checkpoint, "pending_writes", None)
+        next_nodes = checkpoint.metadata.get("writes") if checkpoint.metadata else None
+        # A thread exists. Whether it is still waiting is decided by the compiled
+        # graph, so we only answer "exists" here and let resume_agent confirm.
+        del pending, next_nodes
+        return "exists"
+    except Exception:  # noqa: BLE001 - a bad checkpoint store is "missing", not fatal
+        return "missing"
+    finally:
+        connection.close()
+
+
 def resume_agent(
     thread_id: str,
     approval: str,
@@ -203,6 +243,11 @@ def resume_agent(
 
     if approval not in ("approved", "rejected"):
         raise ValueError("approval must be 'approved' or 'rejected'")
+
+    # Check the thread exists BEFORE building a model client. See the note on
+    # saved_thread_status: getting this order wrong turned a 404 into a 500.
+    if saved_thread_status(settings, thread_id) == "missing":
+        raise ValueError(f"no saved run with thread id {thread_id!r}")
 
     llm = llm or make_client(settings)
     registry = make_registry(settings, llm)

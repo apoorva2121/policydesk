@@ -1,0 +1,15 @@
+# Never copy secrets or local state into an image.
+.env
+.env.*
+!.env.example
+.venv/
+data/processed/
+data/raw/
+.git/
+.github/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.pyc
+docs/
+tests/

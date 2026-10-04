@@ -31,12 +31,17 @@ dependencies = [
     "mcp==2.3.0",
     # Milestone 8: optional tracing. The app runs identically without it.
     "langfuse==4.16.0",
+    # Milestone 9: serving. All Python - no JS, no HTML, no build step.
+    "fastapi==0.142.2",
+    "uvicorn[standard]==0.54.0",
+    "streamlit==1.65.0",
 ]
 
 [dependency-groups]
 dev = [
     "pytest==9.1.1",
     "ruff==0.16.10",
+    "httpx==0.28.1",   # FastAPI's TestClient needs it
 ]
 
 [build-system]
@@ -59,3 +64,11 @@ src = ["src", "tests"]
 # E/F = pycodestyle+pyflakes, I = import sorting, UP = modern syntax,
 # B = likely bugs, SIM = simplifications.
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.flake8-bugbear]
+# B008 flags a function call in an argument default, which is usually a real bug
+# (a mutable default evaluated once). `Depends()` is FastAPI's documented idiom
+# and is evaluated per request by the framework, so it is exempted here rather
+# than silenced with a noqa on every endpoint. Configuring the linter correctly
+# beats scattering suppressions, which is how a codebase stops being linted.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path"]

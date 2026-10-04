@@ -196,3 +196,51 @@ intermediate result inside one query. Not a table.
 
 **Known-answer test** -- a test whose expected value you computed yourself,
 independently of the code. The only kind that catches a subtle regression.
+
+
+## Measurement, serving and operations (Milestones 7-10)
+
+**Evaluation set / golden set** -- questions with known correct answers, kept in
+version control. The only way to tell a real improvement from a lucky run.
+
+**Ground truth** -- the correct answer, established by a person. An expected answer
+produced by a model is not ground truth; it is the same guess with more confidence.
+
+**Recall@k** -- of the passages you needed, what share did retrieval actually
+return. Says nothing about whether the answer used them.
+
+**MRR (mean reciprocal rank)** -- how high up the list the first useful passage
+appeared. 1.0 means first. Catches the difference between "found it" and "found it
+ninth", which recall cannot see.
+
+**Churn (in a comparison)** -- how many cases changed verdict at all. The number to
+check before believing a small delta: four flips each way nets to zero and means
+unstable, not unchanged.
+
+**Noise floor** -- the amount a score moves between runs of the *same*
+configuration. A change smaller than the noise floor has not been demonstrated.
+
+**Span / trace** -- a span is one timed step; a trace is the tree of spans for one
+request. Logs give you a sequence; a trace gives you a shape and a duration.
+
+**Liveness vs readiness** -- liveness answers "am I alive" (failing means restart
+me); readiness answers "can I serve a request" (failing means stop sending me
+traffic). Different questions with different responses.
+
+**Structured logging in production** -- `LOG_JSON=true` emits one JSON object per
+line, which is what log collectors parse. Humans get the colourful version in dev.
+
+**Multi-stage Docker build** -- build in one image, copy only the result into a
+smaller final image. Fewer packages in the thing you run means fewer to patch.
+
+**Non-root container** -- running as an unprivileged user, so a compromise gets
+that user's rights rather than root's.
+
+**Volume** -- a directory kept outside the image. State belongs here; baking it in
+means rebuilding the image to change data.
+
+**Scales to zero** -- a hosting model that costs nothing when idle. Right for an
+internal tool used in bursts.
+
+**Row-level security** -- the database itself restricts which rows a given login
+can see. Enforced by the database, not by a prompt or a regex.

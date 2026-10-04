@@ -457,3 +457,109 @@ and the two must never be confused.
 Milestone 4 — LangGraph. A router that picks tools, a planner that decomposes the
 cross-source question, a bounded retry loop, a verification step, and a human
 approval interrupt before any consequential action.
+
+
+---
+
+## 2026-10-04 — Milestones 9 and 10: serving it, and the Azure mapping
+
+**Status:** done. The Docker image build is **not verified locally** — see below.
+
+### Milestone 9: FastAPI, Streamlit, Docker, CI
+
+All Python. No JavaScript, no HTML, no build step.
+
+| File | Purpose |
+| --- | --- |
+| `api.py` | FastAPI: `/ask`, `/threads/{id}/decision`, `/queue`, `/healthz`, `/readyz` |
+| `ui.py` | Streamlit: the answer, its citations, the SQL, verification, trace, timing, cost, and the approval gate |
+| `Dockerfile` | Two-stage build, non-root user, data as a volume, container health check |
+| `.github/workflows/ci.yml` | Lint, format, 261 tests, clean-install check, data-generation check, image build |
+| `docs/DEPLOYMENT.md` | How to run it, and the honest production gap list |
+
+**Verified live:** a full approval cycle through HTTP. `POST /ask` proposed
+flagging expense 1106 and returned `waiting_for_approval: true` with the queue
+empty; `POST /threads/{id}/decision` with `approved` wrote exactly one entry.
+
+**CI runs with no API key.** Every test uses a fake model client, so the suite is
+free, fast and deterministic. `APP_ENV=test` is what makes that possible, and it is
+why that escape hatch was built in Milestone 0.
+
+### Two bugs the API tests caught
+
+**1. A 404 was returning 500.** `resume_agent` built the model client *before*
+checking whether the thread existed, so asking about an unknown thread with no key
+configured raised a credentials error. The general rule: validate the request
+before constructing anything expensive or credentialed. Reading a checkpoint needs
+no model, so it must not require one. Fixed with `saved_thread_status`, which reads
+state only.
+
+**2. Two places opened the checkpoint store with different serializers.** The new
+status check used a bare `SqliteSaver`, which re-emitted the deserialization
+warnings the graph had already fixed. Small in itself, and exactly the drift that
+ends with two components disagreeing about how state is stored. `make_serde()` is
+now shared.
+
+### Decisions worth defending
+
+1. **`/healthz` touches nothing; `/readyz` checks everything.** A liveness check
+   that queries the database fails during a database blip and gets the process
+   killed for something that was not its fault. Not-ready means "stop sending
+   traffic"; not-alive means "restart me". Different answers, different endpoints.
+2. **No internal detail in any HTTP response.** A stack trace in a response body
+   hands a stranger your file paths, library versions and sometimes the SQL that
+   failed. A test asserts a planted password never appears in a 500.
+3. **The response is a translation, not the internal state.** The agent state holds
+   evidence text, internal error detail and tool arguments. Returning all of it
+   because it happens to be in the object is how internals leak.
+4. **Actions default to OFF over HTTP, ON in the CLI.** A CLI user is the operator;
+   an HTTP caller is a stranger until there is authentication.
+5. **Localhost by default, with a warning if you override it.** There is no
+   authentication, so a public bind would expose one company's expense data.
+6. **Non-root in the container, data as a volume.** The index and the database are
+   state: baking them into an image means rebuilding to add a document, and puts
+   expense data inside a shareable artefact.
+7. **The UI shows the SQL, the trace, the timing and the cost.** An interface that
+   shows only the answer teaches its users to trust it blindly, which is the
+   opposite of what this system is for.
+8. **`Depends()` exempted in ruff config, not silenced with `noqa` per endpoint.**
+   B008 is right about mutable defaults and wrong about FastAPI's idiom.
+   Configuring the linter beats scattering suppressions, which is how a codebase
+   stops being linted.
+
+### Milestone 10: the Azure mapping
+
+`docs/AZURE.md`: a component-by-component table, a Mermaid architecture, what
+changes in the code, and what costs money by category.
+
+The honest summary: **the design does not change.** Roughly six files need edits,
+and `LLMClient` being the single door to the model is why it is six and not sixty.
+The graph, the nodes, the guardrails, the tool contract, the evaluation harness and
+the verifier are all untouched.
+
+The cost shape worth remembering: **AI Search and Azure SQL bill for existing;
+OpenAI and Document Intelligence bill for using; Container Apps bills for running
+and scales to zero.** An idle AI Search index still costs money every hour, which
+is the line that surprises people.
+
+The largest piece of work is the one that is missing locally: **Entra ID**, and a
+user identity threaded into retrieval so AI Search can filter by permissions and
+Azure SQL can enforce row-level security. Nothing else should ship first.
+
+### Honest limitations
+
+- **The Docker image has not been built.** Docker Desktop was not running on this
+  machine. The CI job builds it on every push; until that goes green the Dockerfile
+  is reviewed, not tested. Recorded here rather than assumed working.
+- Nothing has been deployed to Azure. `docs/AZURE.md` is a design, with no Bicep or
+  Terraform, no networking detail and no cost estimate.
+- Streamlit is right for an internal tool and wrong for a product: one user per
+  process, a full script re-run per interaction, no routing.
+- No authentication anywhere. This is the blocking gap, recorded at the top of the
+  production list in `docs/DEPLOYMENT.md`.
+
+### Next
+
+Nothing. The ten milestones are complete. What remains is study, and improving
+answer quality against the evaluation set — which is now a measurement rather than
+an opinion.

@@ -248,6 +248,28 @@ def build_graph(
     return graph
 
 
+def make_serde() -> JsonPlusSerializer:
+    """The checkpoint serializer, with our own types declared.
+
+    Shared rather than built inline, because ANY code that opens the checkpoint
+    store needs the same one. A second place that opened it without this (the
+    thread-status check in `pipeline.py`) re-emitted the deserialization warnings
+    -- a small thing, but the sort of drift that ends with two components disagreeing
+    about how state is stored.
+
+    Declaring the types matters beyond the warning: a deserializer that accepts
+    any class it is handed turns a checkpoint store into a way to construct
+    arbitrary objects.
+    """
+    return JsonPlusSerializer(
+        allowed_msgpack_modules=[
+            ("policydesk.graph.state", "PlannedStep"),
+            ("policydesk.graph.state", "Evidence"),
+            ("policydesk.graph.state", "PendingAction"),
+        ]
+    )
+
+
 def compile_graph(
     settings: Settings,
     llm: LLMClient,
@@ -276,18 +298,7 @@ def compile_graph(
 
     connection = sqlite3.connect(str(path), check_same_thread=False)
 
-    # Our own Pydantic types go into the saved state, so the serializer must be
-    # told they are expected. Without this it warns on every load and will refuse
-    # outright in a future version -- a deserializer that accepts any type it is
-    # handed is how a checkpoint store becomes a way to execute arbitrary objects.
-    serde = JsonPlusSerializer(
-        allowed_msgpack_modules=[
-            ("policydesk.graph.state", "PlannedStep"),
-            ("policydesk.graph.state", "Evidence"),
-            ("policydesk.graph.state", "PendingAction"),
-        ]
-    )
-    checkpointer = SqliteSaver(connection, serde=serde)
+    checkpointer = SqliteSaver(connection, serde=make_serde())
 
     compiled = graph.compile(
         checkpointer=checkpointer,

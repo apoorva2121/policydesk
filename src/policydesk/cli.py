@@ -22,6 +22,8 @@ eval-cases     list the evaluation dataset and what each case checks (free)
 eval           run the evaluation, score the system, optionally save the report
 eval-compare   compare the two most recent saved runs, honestly about noise
 langfuse-setup show how to run Langfuse locally and whether it is reachable
+serve          run the HTTP API (localhost only: there is no authentication)
+ui             run the Streamlit interface
 
 Every command is read-only with respect to your settings, prints what it did,
 and returns a process exit code (0 = fine). That last part matters: a command
@@ -905,6 +907,75 @@ def cmd_langfuse_setup() -> int:
 
 
 # ---------------------------------------------------------------------------
+# serve, ui  (Milestone 9)
+# ---------------------------------------------------------------------------
+
+
+def cmd_serve(host: str, port: int, reload: bool) -> int:
+    """Run the HTTP API.
+
+    Binds to localhost by default and deliberately. There is no authentication,
+    so a public bind would expose one company's expense data to everyone.
+    """
+    settings = _load_settings_or_explain()
+    if settings is None:
+        return 1
+
+    import uvicorn
+
+    if host not in ("127.0.0.1", "localhost"):
+        print(f"WARNING: binding to {host}, and this service has NO AUTHENTICATION.")
+        print("         Anyone who can reach it can read the expense data.")
+        print()
+
+    print(f"API on http://{host}:{port}")
+    print(f"  interactive docs   http://{host}:{port}/docs")
+    print(f"  liveness           http://{host}:{port}/healthz")
+    print(f"  readiness          http://{host}:{port}/readyz")
+    print()
+    uvicorn.run(
+        "policydesk.api:create_app",
+        factory=True,
+        host=host,
+        port=port,
+        reload=reload,
+        log_level=settings.log_level.lower(),
+    )
+    return 0
+
+
+def cmd_ui(port: int) -> int:
+    """Run the Streamlit interface by handing off to the streamlit CLI."""
+    settings = _load_settings_or_explain()
+    if settings is None:
+        return 1
+
+    import subprocess
+    from pathlib import Path as _Path
+
+    module = _Path(__file__).parent / "ui.py"
+    print(f"Starting the interface on http://localhost:{port}")
+    print("Press Ctrl+C to stop.")
+    return subprocess.call(
+        [
+            sys.executable,
+            "-m",
+            "streamlit",
+            "run",
+            str(module),
+            "--server.port",
+            str(port),
+            "--server.address",
+            "localhost",
+            "--server.headless",
+            "true",
+            "--browser.gatherUsageStats",
+            "false",
+        ]
+    )
+
+
+# ---------------------------------------------------------------------------
 # wiring
 # ---------------------------------------------------------------------------
 
@@ -978,6 +1049,13 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("eval-compare", help="compare the two most recent saved runs")
     sub.add_parser("langfuse-setup", help="show how to run Langfuse locally, and its status")
 
+    serve_parser = sub.add_parser("serve", help="run the HTTP API")
+    serve_parser.add_argument("--host", default="127.0.0.1")
+    serve_parser.add_argument("--port", type=int, default=8000)
+    serve_parser.add_argument("--reload", action="store_true", help="restart on code changes")
+    ui_parser = sub.add_parser("ui", help="run the Streamlit interface")
+    ui_parser.add_argument("--port", type=int, default=8501)
+
     args = parser.parse_args(argv)
 
     if args.command == "doctor":
@@ -1020,6 +1098,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_eval_compare()
     if args.command == "langfuse-setup":
         return cmd_langfuse_setup()
+    if args.command == "serve":
+        return cmd_serve(args.host, args.port, args.reload)
+    if args.command == "ui":
+        return cmd_ui(args.port)
 
     parser.error(f"unknown command: {args.command}")
     return 2

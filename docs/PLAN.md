@@ -89,13 +89,13 @@ yourself, because your judgement matters more than boilerplate there.
 | 1 | Sample data + PDF/Excel extraction with metadata | Why page/sheet/row metadata is what makes citations possible | done |
 | 2 | Plain RAG baseline, chunk inspector, "I do not know" | **When plain RAG is enough** | done |
 | 3 | Tools: text-to-SQL + policy lookup | Tool contracts; numbers never come from the model | done |
-| 4 | LangGraph: state, router, bounded retry loop, interrupt ✍️ router policy | State machines vs chains vs free-running agents | next |
-| 5 | Guardrails + red-team tests | Why a prompt is not a security boundary | |
-| 6 | MCP server + client | Protocol vs in-process function calling | |
-| 7 | Evaluation: Recall@k, MRR, groundedness, citation and tool-choice checks ✍️ eval set | What each metric does and does not tell you | |
-| 8 | Langfuse traces, cost, latency, redaction | Debugging one slow request end to end | |
-| 9 | FastAPI, UI, Docker, CI, versioning and rollback | Why Docker + tests ≠ production ready | |
-| 10 | Azure reference mapping + diagram (docs only) | Local → Azure translation, with costs flagged | |
+| 4 | LangGraph: state, router, bounded retry loop, interrupt ✍️ router policy | State machines vs chains vs free-running agents | done |
+| 5 | Guardrails + red-team tests | Why a prompt is not a security boundary | done |
+| 6 | MCP server + client | Protocol vs in-process function calling | done |
+| 7 | Evaluation: Recall@k, MRR, groundedness, citation and tool-choice checks ✍️ eval set | What each metric does and does not tell you | done |
+| 8 | Langfuse traces, cost, latency, redaction | Debugging one slow request end to end | done |
+| 9 | FastAPI, UI, Docker, CI, versioning and rollback | Why Docker + tests ≠ production ready | done |
+| 10 | Azure reference mapping + diagram (docs only) | Local → Azure translation, with costs flagged | done |
 
 ## What this is NOT (the production gap list)
 

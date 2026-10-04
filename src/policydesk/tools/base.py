@@ -197,6 +197,28 @@ class ToolRegistry:
                 flags.append("NEEDS APPROVAL")
             suffix = f" ({', '.join(flags)})" if flags else ""
             lines.append(f"- {name}{suffix}: {tool.description}")
+
+            # The ARGUMENT NAMES, read from the tool's own schema rather than
+            # written out separately in the planner's prompt.
+            #
+            # A real failure this fixes: asked about parental leave, the planner
+            # called policy_search with {"policy_type": "parental leave"} -- an
+            # argument name it invented. The tool's input validation rejected it,
+            # so nothing broke and the system refused honestly. But the refusal was
+            # accidental rather than reasoned, and two attempts were wasted.
+            #
+            # Deriving the names from the schema means they cannot drift out of step
+            # with the code, which is exactly what happens when a prompt lists them
+            # separately and somebody later renames a field.
+            schema = tool.input_model.model_json_schema()
+            properties = schema.get("properties") or {}
+            required = set(schema.get("required") or [])
+            if properties:
+                described = ", ".join(
+                    f"{field}{'' if field in required else ' (optional)'}" for field in properties
+                )
+                lines.append(f"    arguments: {described}")
+
         return "\n".join(lines)
 
     def call(self, name: str, raw_input: dict[str, Any]) -> ToolResult:
