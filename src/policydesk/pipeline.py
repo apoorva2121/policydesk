@@ -8,6 +8,7 @@ tested stops being the thing you shipped.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from .config import Settings
 from .ingest import ExtractionReport, extract_excel, extract_pdf
@@ -122,6 +123,7 @@ class AgentRun:
     state: dict
     waiting_for_approval: bool
     usage: str
+    tracer: Any = None
 
     @property
     def answer(self) -> str | None:
@@ -153,10 +155,14 @@ def run_agent(
     import uuid
 
     from .graph.build import compile_graph
+    from .observability import Tracer
 
     llm = llm or make_client(settings)
     registry = make_registry(settings, llm)
-    graph, close = compile_graph(settings, llm, registry, allow_actions=allow_actions)
+    tracer = Tracer(settings)
+    graph, close = compile_graph(
+        settings, llm, registry, allow_actions=allow_actions, tracer=tracer
+    )
 
     thread_id = thread_id or f"run-{uuid.uuid4().hex[:12]}"
     config = {"configurable": {"thread_id": thread_id}}
@@ -171,12 +177,14 @@ def run_agent(
         waiting = bool(snapshot.next)
     finally:
         close()
+        tracer.flush()
 
     return AgentRun(
         thread_id=thread_id,
         state=dict(state),
         waiting_for_approval=waiting,
         usage=llm.usage_summary(),
+        tracer=tracer,
     )
 
 

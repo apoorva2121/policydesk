@@ -18,6 +18,10 @@ queue          show the Finance Operations review queue
 diagram        print the orchestration diagram as Mermaid
 mcp-server     run the MCP server over stdin/stdout
 mcp-demo       connect to the MCP server, discover its tools and call them
+eval-cases     list the evaluation dataset and what each case checks (free)
+eval           run the evaluation, score the system, optionally save the report
+eval-compare   compare the two most recent saved runs, honestly about noise
+langfuse-setup show how to run Langfuse locally and whether it is reachable
 
 Every command is read-only with respect to your settings, prints what it did,
 and returns a process exit code (0 = fine). That last part matters: a command
@@ -544,6 +548,18 @@ def _print_run(run, show_trace: bool) -> None:
         for step, line in enumerate(state.get("trace") or [], start=1):
             print(f"  {step:>2}. {line}")
 
+        tracer = getattr(run, "tracer", None)
+        if tracer is not None and tracer.spans:
+            print()
+            print("TIMING (where the wall-clock time went)")
+            for line in tracer.summary_lines():
+                print(line)
+            print(f"  {'total':<16} {tracer.total_ms:>6}ms")
+            slowest = tracer.slowest(1)
+            if slowest:
+                print(f"  slowest step: {slowest[0].name} ({slowest[0].duration_ms}ms)")
+            print(f"  {tracer.status_line()}")
+
     print()
     print("-" * 78)
     print(f"Thread: {run.thread_id}")
@@ -715,6 +731,180 @@ def _flatten_exception(exc: BaseException, depth: int = 0) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# eval, eval-compare, eval-cases  (Milestone 7)
+# ---------------------------------------------------------------------------
+
+
+def _fmt(value: float | None, width: int = 5) -> str:
+    return f"{value:.3f}".rjust(width) if value is not None else "  -  "
+
+
+def cmd_eval_cases() -> int:
+    """List the evaluation set. Free: no model calls."""
+    from .evaluation import CASES, dataset_summary
+
+    print("Evaluation dataset")
+    print("-" * 78)
+    for name, count in dataset_summary().items():
+        print(f"  {name:<16} {count}")
+    print()
+
+    for case in CASES:
+        print(f"  {case.id:<10} [{case.category}]")
+        print(f"      Q: {case.question}")
+        if case.must_contain:
+            print(f"      must contain     : {', '.join(case.must_contain)}")
+        if case.must_not_contain:
+            print(f"      must NOT contain : {', '.join(case.must_not_contain)}")
+        if case.should_refuse:
+            print("      must refuse      : yes")
+        if case.note:
+            print(f"      why              : {case.note}")
+        print()
+    return 0
+
+
+def cmd_eval(label: str, category: str | None, limit: int | None, save: bool) -> int:
+    """Run the evaluation and print a scored report."""
+    from .evaluation import run_evaluation, save_report
+
+    settings = _load_settings_or_explain()
+    if settings is None:
+        return 1
+
+    configure_logging(settings)
+
+    print(f"Running evaluation: {label or 'unlabelled'}")
+    print(
+        f"Configuration: chunk={settings.chunk_strategy}/{settings.chunk_size_chars}, "
+        f"embed={settings.embedding_model}, answer={settings.answer_model}, "
+        f"k={settings.retrieval_top_k}"
+    )
+    print("-" * 78)
+
+    def show(record) -> None:  # noqa: ANN001
+        mark = "PASS" if record.passed else "FAIL"
+        print(
+            f"  {mark}  {record.id:<10} {record.duration_s:>5.1f}s  ${record.cost_usd:.4f}"
+            + (f"  {record.reason}" if record.reason else "")
+        )
+
+    try:
+        report = run_evaluation(
+            settings,
+            label=label,
+            category=category,  # type: ignore[arg-type]
+            limit=limit,
+            on_case=show,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"Evaluation failed: {exc}", file=sys.stderr)
+        return 1
+
+    print("-" * 78)
+    print("RESULTS")
+    print(f"  pass rate            {report.passed}/{report.total} = {report.pass_rate:.1%}")
+    print(f"  retrieval recall@k   {_fmt(report.mean('recall'))}")
+    print(f"  retrieval MRR        {_fmt(report.mean('mrr'))}")
+    print(f"  tool choice          {_fmt(report.mean('tool_score'))}")
+    print(f"  total cost           ${report.total_cost_usd:.4f}")
+    print()
+    print("  By category:")
+    for name, (passed, total) in report.by_category().items():
+        print(f"    {name:<16} {passed}/{total}")
+
+    failures = report.failures()
+    if failures:
+        print()
+        print(f"  {len(failures)} failure(s):")
+        for record in failures:
+            print(f"    {record.id:<10} {record.reason}")
+            if record.answer_preview:
+                print(f"               answered: {record.answer_preview[:110]}")
+
+    print()
+    print("  What these numbers do NOT tell you:")
+    print("    - recall says nothing about whether the answer USED what was found")
+    print("    - a pass rate on 22 cases cannot estimate a true accuracy; it can")
+    print("      catch a regression and compare two configurations, which is enough")
+
+    if save:
+        path = save_report(report, settings)
+        print()
+        print(f"  Saved to {path}")
+        print("  Compare two runs with:  policydesk eval-compare")
+    return 0
+
+
+def cmd_eval_compare() -> int:
+    """Compare the two most recent saved runs."""
+    from .evaluation import compare, latest_reports
+
+    settings = _load_settings_or_explain()
+    if settings is None:
+        return 1
+
+    reports = latest_reports(settings, count=2)
+    if len(reports) < 2:
+        print("Need at least two saved runs. Run 'policydesk eval --save' twice.", file=sys.stderr)
+        return 1
+
+    candidate, baseline = reports[0], reports[1]
+    result = compare(baseline, candidate)
+
+    print("Comparison")
+    print("-" * 78)
+    print(f"  baseline  {result.baseline_label}")
+    print(f"            {result.baseline_pass_rate:.1%}")
+    print(f"  candidate {result.candidate_label}")
+    print(f"            {result.candidate_pass_rate:.1%}")
+    print()
+    print(f"  delta           {result.delta:+.1%}")
+    print(f"  newly passing   {', '.join(result.newly_passing) or 'none'}")
+    print(f"  newly failing   {', '.join(result.newly_failing) or 'none'}")
+    print(f"  unchanged       {result.unchanged}")
+    print(f"  cases moved     {result.churn}")
+    print()
+    print(f"  Reading: {result.verdict()}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# langfuse-setup  (Milestone 8)
+# ---------------------------------------------------------------------------
+
+
+def cmd_langfuse_setup() -> int:
+    """Print what is needed to run Langfuse locally, and the current status."""
+    from .observability import Tracer, docker_compose_snippet
+
+    settings = _load_settings_or_explain()
+    if settings is None:
+        return 1
+
+    tracer = Tracer(settings)
+    print("Langfuse status")
+    print("-" * 78)
+    print(f"  {tracer.status_line()}")
+    print()
+    print("Tracing is OPTIONAL. Everything works without it: `agent --trace` already")
+    print("prints the step-by-step trace and a timing breakdown, with no account and")
+    print("no network. Langfuse adds history across runs and a view somebody else can")
+    print("look at.")
+    print()
+    print("To run it locally, free and self-hosted:")
+    print()
+    print(docker_compose_snippet())
+    print("Then set LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY in .env.")
+    print()
+    print("What we send: span names, durations, attempt numbers. NOT prompt text and")
+    print("NOT document content -- a retrieved chunk contains names and email")
+    print("addresses, and shipping those to any service copies personal data out of")
+    print("your system, where it is kept and is subject to deletion requests.")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # wiring
 # ---------------------------------------------------------------------------
 
@@ -775,6 +965,19 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("mcp-server", help="run the MCP server over stdin/stdout")
     sub.add_parser("mcp-demo", help="connect to the MCP server and call its tools")
 
+    sub.add_parser("eval-cases", help="list the evaluation dataset (free)")
+    eval_parser = sub.add_parser("eval", help="run the evaluation and score the system")
+    eval_parser.add_argument("--label", default="", help="a name for this run, e.g. 'baseline'")
+    eval_parser.add_argument(
+        "--category",
+        choices=["policy_lookup", "aggregate", "cross_source", "refusal", "adversarial"],
+        help="run only one category",
+    )
+    eval_parser.add_argument("--limit", type=int, help="run only the first N cases")
+    eval_parser.add_argument("--save", action="store_true", help="save the report for comparison")
+    sub.add_parser("eval-compare", help="compare the two most recent saved runs")
+    sub.add_parser("langfuse-setup", help="show how to run Langfuse locally, and its status")
+
     args = parser.parse_args(argv)
 
     if args.command == "doctor":
@@ -809,6 +1012,14 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_mcp_server()
     if args.command == "mcp-demo":
         return cmd_mcp_demo()
+    if args.command == "eval-cases":
+        return cmd_eval_cases()
+    if args.command == "eval":
+        return cmd_eval(args.label, args.category, args.limit, args.save)
+    if args.command == "eval-compare":
+        return cmd_eval_compare()
+    if args.command == "langfuse-setup":
+        return cmd_langfuse_setup()
 
     parser.error(f"unknown command: {args.command}")
     return 2

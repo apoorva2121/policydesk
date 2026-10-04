@@ -29,6 +29,8 @@ dependencies = [
     # Milestone 6: Model Context Protocol. Pinned because 2.x renamed FastMCP to
     # MCPServer and inputSchema to input_schema - writing either from memory breaks.
     "mcp==2.3.0",
+    # Milestone 8: optional tracing. The app runs identically without it.
+    "langfuse==4.16.0",
 ]
 
 [dependency-groups]

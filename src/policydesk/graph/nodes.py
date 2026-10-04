@@ -674,10 +674,46 @@ one specific written rule. Propose at most one. You are proposing, not deciding:
 human approves or rejects it."""
 
 
+# Words that signal the user actually wants something DONE, not just answered.
+#
+# A bug worth remembering, found right here: this pattern was first written
+# with  inside a NON-raw Python string. In a normal string "\b" is the
+# BACKSPACE character, not a regex word boundary -- so the pattern compiled
+# cleanly, looked correct in the source, and silently never matched anything.
+# The gate skipped every question, including ones that plainly said "flag it".
+#
+# Always use a raw string for a regex. This failure mode is invisible: grep
+# does not render the control character, so the source looks fine.
+ACTION_INTENT = re.compile(
+    r"\b(flag|escalate|raise|report|queue|submit for review|file)\b",
+    re.IGNORECASE,
+)
+
+
 def propose_action_node(state: AgentState, *, llm: LLMClient, enabled: bool) -> AgentState:
-    """Decide whether to propose a write. Proposing is not doing."""
+    """Decide whether to propose a write. Proposing is not doing.
+
+    The intent check below was added because of a measurement, not a hunch. The
+    timing breakdown showed this node taking 1109ms -- 55% of the wall-clock time --
+    on a question that asked "what is the hotel limit in Tokyo?" and had nothing to
+    flag. A model call on every single question, to decide "no", on most of them.
+
+    So: if the question contains no request for an action, skip the call entirely.
+    This is a cheap, specific win that nobody would have found by reading the code,
+    which is exactly what tracing is for.
+
+    It does narrow the behaviour: the agent no longer volunteers a flag for a breach
+    you did not ask it to act on. That is a defensible trade -- an assistant that
+    files review requests unprompted is a harder thing to deploy than one that
+    waits to be asked -- but it is a trade, not a free win, and it belongs in the
+    documented limitations rather than being quietly made.
+    """
     if not enabled or state.get("refused") or not state.get("verified"):
         return AgentState(trace=["propose_action: skipped"])
+
+    question = state.get("question") or ""
+    if not ACTION_INTENT.search(question):
+        return AgentState(trace=["propose_action: skipped (the question asks for no action)"])
 
     evidence = state.get("evidence") or []
     context = "\n\n".join(item.for_prompt(n) for n, item in enumerate(evidence, start=1))

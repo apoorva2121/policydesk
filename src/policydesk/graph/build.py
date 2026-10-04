@@ -49,6 +49,7 @@ from langgraph.graph import END, START, StateGraph
 from ..config import Settings
 from ..guardrails import CallBudget
 from ..llm.client import LLMClient
+from ..observability import Tracer
 from ..tools.base import ToolRegistry
 from .nodes import (
     compose_node,
@@ -158,9 +159,29 @@ def build_graph(
     registry: ToolRegistry,
     *,
     allow_actions: bool = True,
+    tracer: Tracer | None = None,
 ):
     """Wire the nodes and edges. Returns an uncompiled StateGraph."""
     graph = StateGraph(AgentState)
+
+    def traced(name: str, function):
+        """Time a node, without the node knowing it is being timed.
+
+        Wrapping here rather than inside each node is the point: one place knows
+        about timing, and a new node gets it for free. An observability concern
+        threaded through nine functions is nine chances to forget it in the tenth.
+
+        With no tracer this returns the function unchanged, so the overhead when
+        tracing is off is exactly zero.
+        """
+        if tracer is None:
+            return function
+
+        def wrapped(state: AgentState) -> AgentState:
+            with tracer.span(name, attempt=state.get("attempts", 0)):
+                return function(state)
+
+        return wrapped
 
     def increment_then_plan(state: AgentState) -> AgentState:
         """Count the attempt, then plan.
@@ -174,25 +195,41 @@ def build_graph(
         return changed
 
     graph.add_node(
-        "guard_input", lambda state: guard_input_node(state, max_chars=settings.max_input_chars)
+        "guard_input",
+        traced(
+            "guard_input",
+            lambda state: guard_input_node(state, max_chars=settings.max_input_chars),
+        ),
     )
-    graph.add_node("plan", increment_then_plan)
+    graph.add_node("plan", traced("plan", increment_then_plan))
     # One budget object for the whole run, so the cap is across every attempt
     # rather than per attempt -- otherwise three attempts triple the limit.
     budget = CallBudget(max_calls=settings.max_tool_calls_per_run)
-    graph.add_node("gather", lambda state: gather_node(state, registry=registry, budget=budget))
+    graph.add_node(
+        "gather",
+        traced("gather", lambda state: gather_node(state, registry=registry, budget=budget)),
+    )
     graph.add_node(
         "grade",
-        lambda state: grade_node(state, llm=llm, max_attempts=settings.max_graph_loops + 1),
+        traced(
+            "grade",
+            lambda state: grade_node(state, llm=llm, max_attempts=settings.max_graph_loops + 1),
+        ),
     )
-    graph.add_node("compose", lambda state: compose_node(state, llm=llm))
-    graph.add_node("verify", verify_node)
+    graph.add_node("compose", traced("compose", lambda state: compose_node(state, llm=llm)))
+    graph.add_node("verify", traced("verify", verify_node))
     graph.add_node(
         "propose_action",
-        lambda state: propose_action_node(state, llm=llm, enabled=allow_actions),
+        traced(
+            "propose_action",
+            lambda state: propose_action_node(state, llm=llm, enabled=allow_actions),
+        ),
     )
-    graph.add_node("execute_action", lambda state: execute_action_node(state, registry=registry))
-    graph.add_node("finalize", finalize_node)
+    graph.add_node(
+        "execute_action",
+        traced("execute_action", lambda state: execute_action_node(state, registry=registry)),
+    )
+    graph.add_node("finalize", traced("finalize", finalize_node))
 
     graph.add_edge(START, "guard_input")
     graph.add_conditional_edges("guard_input", route_after_guard)
@@ -218,6 +255,7 @@ def compile_graph(
     *,
     allow_actions: bool = True,
     checkpoint_path: Path | None = None,
+    tracer: Tracer | None = None,
 ):
     """Compile the graph with a durable checkpointer and the human interrupt.
 
@@ -229,7 +267,7 @@ def compile_graph(
     process exited -- so approval would have to happen within one run, which is not
     how humans work.
     """
-    graph = build_graph(settings, llm, registry, allow_actions=allow_actions)
+    graph = build_graph(settings, llm, registry, allow_actions=allow_actions, tracer=tracer)
 
     path = checkpoint_path or (settings.data_dir / "processed" / "agent-checkpoints.sqlite")
     path.parent.mkdir(parents=True, exist_ok=True)
