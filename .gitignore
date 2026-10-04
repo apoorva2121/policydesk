@@ -20,6 +20,12 @@ data/processed/
 data/raw/*
 !data/raw/.gitkeep
 
+# Your own study answers and self-scores. Yours, not the project's --
+# the contrast with eval-runs/ (committed) is deliberate: that measures the
+# SYSTEM, this records YOU.
+study-progress.json
+study-progress.tmp
+
 # OS / editor
 Thumbs.db
 .DS_Store

@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     # the generator's blind spots. Used only by the evaluation milestone.
     judge_model: str = "gpt-5-mini"
     embedding_model: str = "text-embedding-3-small"
+    # "provider" calls the API. "local" would run a model on this machine -- it is
+    # declared but NOT implemented, and the validator below refuses it loudly. A
+    # setting that silently does nothing is worse than no setting: it is a lie in
+    # your configuration that somebody will act on.
     embedding_backend: Literal["provider", "local"] = "provider"
 
     # Cache identical model calls on disk. The biggest saving while learning.
@@ -124,6 +128,32 @@ class Settings(BaseSettings):
                 "LLM_PROVIDER=openai but OPENAI_API_KEY is empty.\n"
                 "Fix: copy .env.example to .env and paste your key into OPENAI_API_KEY.\n"
                 "(Or set APP_ENV=test to run without a key.)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _reject_unimplemented_backends(self) -> Settings:
+        """Refuse a setting that is declared but not wired up.
+
+        `EMBEDDING_BACKEND=local` was in `.env.example` from Milestone 0 as a
+        placeholder, and nothing ever implemented it. Setting it did nothing at all
+        -- the provider was still called, and the bill still arrived.
+
+        That is a worse state than not offering the option, because a configuration
+        file is a document people trust. So it fails at startup with an explanation
+        and a pointer to what would be involved, which is the same fail-fast rule
+        applied to our own unfinished work.
+        """
+        if self.embedding_backend == "local":
+            raise ValueError(
+                "EMBEDDING_BACKEND=local is declared but not implemented, so it would "
+                "silently fall back to the API and still cost money.\n"
+                "Use EMBEDDING_BACKEND=provider.\n"
+                "Implementing it would mean adding a local embedding library "
+                "(fastembed is light; sentence-transformers pulls in ~2GB of PyTorch), "
+                "and re-embedding the whole corpus -- the index manifest will refuse "
+                "to load otherwise. Expect lower retrieval quality: see "
+                "docs/DEPLOYMENT.md."
             )
         return self
 

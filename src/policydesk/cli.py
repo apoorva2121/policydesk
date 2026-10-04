@@ -24,6 +24,7 @@ eval-compare   compare the two most recent saved runs, honestly about noise
 langfuse-setup show how to run Langfuse locally and whether it is reachable
 serve          run the HTTP API (localhost only: there is no authentication)
 ui             run the Streamlit interface
+study          run the interactive study interface (guided path, code tour, drill)
 
 Every command is read-only with respect to your settings, prints what it did,
 and returns a process exit code (0 = fine). That last part matters: a command
@@ -976,6 +977,48 @@ def cmd_ui(port: int) -> int:
 
 
 # ---------------------------------------------------------------------------
+# study
+# ---------------------------------------------------------------------------
+
+
+def cmd_study(port: int) -> int:
+    """Run the interactive study interface."""
+    settings = _load_settings_or_explain()
+    if settings is None:
+        return 1
+
+    import subprocess
+    from pathlib import Path as _Path
+
+    module = _Path(__file__).parent / "study" / "app.py"
+    print(f"Study interface on http://localhost:{port}")
+    print()
+    print("  Guided path       seven sessions, in order - start here")
+    print("  Code tour         every file in the project, with a question each")
+    print("  Interview drill   14 questions, model answers, your own scores")
+    print("  Where things stand your progress and what the system measures")
+    print()
+    print("Press Ctrl+C to stop.")
+    return subprocess.call(
+        [
+            sys.executable,
+            "-m",
+            "streamlit",
+            "run",
+            str(module),
+            "--server.port",
+            str(port),
+            "--server.address",
+            "localhost",
+            "--server.headless",
+            "true",
+            "--browser.gatherUsageStats",
+            "false",
+        ]
+    )
+
+
+# ---------------------------------------------------------------------------
 # wiring
 # ---------------------------------------------------------------------------
 
@@ -1055,6 +1098,8 @@ def main(argv: list[str] | None = None) -> int:
     serve_parser.add_argument("--reload", action="store_true", help="restart on code changes")
     ui_parser = sub.add_parser("ui", help="run the Streamlit interface")
     ui_parser.add_argument("--port", type=int, default=8501)
+    study_parser = sub.add_parser("study", help="run the interactive study interface")
+    study_parser.add_argument("--port", type=int, default=8502)
 
     args = parser.parse_args(argv)
 
@@ -1102,6 +1147,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_serve(args.host, args.port, args.reload)
     if args.command == "ui":
         return cmd_ui(args.port)
+    if args.command == "study":
+        return cmd_study(args.port)
 
     parser.error(f"unknown command: {args.command}")
     return 2
