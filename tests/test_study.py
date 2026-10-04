@@ -429,3 +429,57 @@ def test_the_desktop_is_found_rather_than_assumed() -> None:
 
     found = desktop_directory()
     assert found is None or found.is_dir()
+
+
+def test_a_step_shows_the_command_before_asking_you_to_predict(capsys) -> None:  # noqa: ANN001
+    """A bug a reader found, and obvious in hindsight.
+
+    The tutor asked "which document will it cite?" without ever showing the
+    question being put to the system. That is not a prediction, it is a guessing
+    game: you cannot reason about a command you have not seen.
+    """
+    from policydesk.study.content import SESSIONS
+    from policydesk.study.tutor import show_upcoming
+
+    step = SESSIONS[0].steps[0]
+    show_upcoming(step)
+    output = capsys.readouterr().out
+
+    assert "WHAT WE ARE ABOUT TO RUN" in output
+    assert "per-diem limit for international travel" in output
+
+
+def test_the_explanation_comes_after_the_run_not_before(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    """Revealing the answer before running the command spoils the run.
+
+    The order has to be: see the command, commit to a prediction, watch what
+    really happens, and only then read why. This asserts the source does them in
+    that order, because it is the kind of thing that quietly gets reordered during
+    a refactor.
+    """
+    import inspect
+
+    from policydesk.study import tutor
+
+    source = inspect.getsource(tutor.teach_step)
+
+    predict_at = source.index("PREDICT FIRST")
+    run_at = source.index("Now run it and watch")
+    explain_at = source.index("Why that happened")
+
+    assert predict_at < run_at < explain_at, (
+        "the step must show the command, take a prediction, RUN, then explain"
+    )
+
+
+def test_an_empty_answer_is_allowed_rather_than_blocking(monkeypatch) -> None:  # noqa: ANN001
+    """Nobody should be trapped by a prompt they do not understand."""
+    import io
+
+    from policydesk.study.tutor import ask_long
+
+    monkeypatch.setattr("sys.stdin", io.StringIO("\n"))
+    assert ask_long("anything") == ""
+
+    monkeypatch.setattr("sys.stdin", io.StringIO("skip\n"))
+    assert ask_long("anything") == ""

@@ -246,28 +246,38 @@ def ask(prompt: str, *, default: str = "") -> str:
 
 
 def ask_long(prompt: str, existing: str = "") -> str:
-    """Collect a multi-line answer, finished with a blank line.
+    """Collect an answer, finished with a blank line.
 
-    Deliberately asks for writing rather than a yes/no. The single habit this whole
+    Deliberately asks for writing rather than a keypress. The single habit this
     curriculum rests on is committing to an answer *before* seeing the right one,
-    and a keypress is not a commitment.
+    and pressing Enter is not a commitment.
+
+    The instructions below are more explicit than they look like they need to be,
+    because a bare `>` prompt after a question is genuinely ambiguous: a reader
+    asked what this was and where the lesson had gone.
     """
     print()
-    print(f"{S.yellow}{S.bold}{prompt}{S.reset}")
+    rule()
+    print(f"{S.yellow}{S.bold}  {prompt}{S.reset}")
+    print()
     if existing:
-        print(f"{S.dim}  (previously: {existing[:120]}){S.reset}")
-    print(
-        f"{S.dim}  Type your answer. Finish with an empty line. Being wrong is the point.{S.reset}"
-    )
+        print(f"{S.dim}  You wrote before: {existing[:150]}{S.reset}")
+    print(f"{S.dim}  Type your guess and press Enter. One line is plenty.{S.reset}")
+    print(f"{S.dim}  Then press Enter AGAIN on the empty line to continue.{S.reset}")
+    print(f"{S.dim}  Nothing to say? Just press Enter twice -- or type 'skip'.{S.reset}")
+    rule()
+
     lines: list[str] = []
     while True:
         try:
-            line = input("  > ")
+            line = input(f"{S.yellow}  your answer > {S.reset}")
         except (KeyboardInterrupt, EOFError):
             print()
             raise Quit from None
         if not line.strip():
             break
+        if line.strip().lower() in ("skip", "s"):
+            return ""
         lines.append(line.strip())
     return " ".join(lines).strip()
 
@@ -338,30 +348,85 @@ def offer_to_run(label: str, arguments: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def show_upcoming(step: Step) -> None:
+    """Show WHAT is about to happen, before asking anyone to predict it.
+
+    A bug found by a reader, and an obvious one in hindsight: the tutor asked
+    "which document will it cite?" without ever showing the question being put to
+    the system. That is not a prediction, it is a guessing game -- you cannot
+    reason about a command you have not seen.
+    """
+    if not step.run:
+        return
+    command, extra = step.run
+    display = f"policydesk {command} {extra}".strip()
+    print(f"{S.bold}  WHAT WE ARE ABOUT TO RUN{S.reset}")
+    for line in textwrap.wrap(display, width=WIDTH - 6):
+        print(f"{S.cyan}    {line}{S.reset}")
+    print()
+
+
+def explain_the_rule_once(progress: StudyProgress) -> None:
+    """Explain what a prediction is for -- but only the first time.
+
+    Repeating it on every step would train you to skip the paragraph, and then
+    the one time it matters you would skip that too.
+    """
+    if progress.steps or progress.tour:
+        return
+    rule()
+    paragraph(
+        f"{S.bold}How this works.{S.reset} You will be asked what you think will "
+        "happen BEFORE anything runs. Write a guess -- one line is plenty, and being "
+        "wrong is the whole point. Then the command runs for real, and only then do "
+        "you get the explanation. Reading an answer first feels like learning and "
+        "is not.",
+        indent="  ",
+    )
+    rule()
+
+
 def teach_step(
     step: Step, key: str, progress: StudyProgress, settings: Settings, position: str
 ) -> None:
     record = progress.step(key)
+    first_time = not (progress.steps or progress.tour)
 
-    heading(f"{position}  {step.title}")
-    paragraph(step.instruction)
+    heading(f"{position}  ::  {step.title}")
+    paragraph(step.instruction, indent="  ")
 
+    if first_time:
+        explain_the_rule_once(progress)
+
+    # 1. Show what is about to happen, so a prediction is possible at all.
+    show_upcoming(step)
+
+    # 2. Any code this step wants you to read.
     for path, symbol in step.read:
         show_snippet(read_symbol(path, symbol))
 
+    # 3. Commit to an answer.
     if step.predict:
         written = ask_long(f"PREDICT FIRST: {step.predict}", record.prediction)
         progress.record_step(key, prediction=written)
         progress_store.save(progress, settings)
+        if written:
+            print(f"{S.dim}  Saved. Now let us see what actually happens.{S.reset}")
 
-        subheading("What is actually the case")
-        paragraph(step.answer)
-
-        progress.record_step(key, revealed=True)
-
+    # 4. Run it and watch reality -- BEFORE the explanation, or the run is spoiled.
     if step.run:
         command, extra = step.run
-        offer_to_run("Run it and compare", f"{command} {extra}".strip())
+        offer_to_run("Now run it and watch", f"{command} {extra}".strip())
+
+    # 5. Only now, the explanation.
+    if step.predict:
+        subheading("Why that happened")
+        paragraph(step.answer, indent="  ")
+        progress.record_step(key, revealed=True)
+
+        if record.prediction or written:
+            print(f"{S.dim}  You predicted: {(written or record.prediction)[:200]}{S.reset}")
+            print()
 
     print()
     if confirm("  Mark this step as understood?"):
