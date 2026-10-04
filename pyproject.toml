@@ -7,10 +7,17 @@ requires-python = ">=3.12,<3.13"
 # Versions below are PINNED to what actually resolved on 2026-10-04,
 # not remembered. Re-resolve deliberately, never accidentally.
 dependencies = [
+    # Milestone 0: configuration, validation, logging
     "pydantic==2.13.5",
     "pydantic-settings==2.15.0",
     "python-dotenv==1.2.4",
     "structlog==26.1.0",
+    # Milestone 1: generating and reading documents
+    "reportlab==5.0.1",   # writes the sample policy PDFs
+    "openpyxl==3.1.5",    # reads and writes .xlsx
+    "pdfplumber==0.11.10",  # per-page PDF text and table extraction
+    "pypdf==6.19.0",      # PDF page-level utilities
+    "pillow==12.3.0",     # renders the image-only "scanned" page
 ]
 
 [dependency-groups]
