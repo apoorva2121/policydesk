@@ -102,6 +102,10 @@ class CallRecord(BaseModel):
     input_tokens: int = Field(ge=0)
     output_tokens: int = Field(ge=0)
     cost_usd: float = Field(ge=0)
+    # A cached call costs nothing but still happened. We keep its token counts so
+    # we can show how much the cache saved, which is the only way to know
+    # whether it is worth having.
+    cached: bool = False
 
 
 class CostLedger(BaseModel):
@@ -132,20 +136,28 @@ class CostLedger(BaseModel):
     def total_output_tokens(self) -> int:
         return sum(call.output_tokens for call in self.calls)
 
-    def record(self, model: str, purpose: str, input_tokens: int, output_tokens: int) -> CallRecord:
+    def record(
+        self,
+        model: str,
+        purpose: str,
+        input_tokens: int,
+        output_tokens: int,
+        cached: bool = False,
+    ) -> CallRecord:
         """Record a completed call, then stop the run if we are over the limit.
 
         Note the order: we charge for the call that already happened, and only
         then refuse to continue. You cannot un-spend money, so the limit protects
         the NEXT call, not this one.
         """
-        cost = estimate_cost_usd(model, input_tokens, output_tokens)
+        cost = 0.0 if cached else estimate_cost_usd(model, input_tokens, output_tokens)
         record = CallRecord(
             model=model,
             purpose=purpose,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cost_usd=cost,
+            cached=cached,
         )
         self.calls.append(record)
 
@@ -157,6 +169,19 @@ class CostLedger(BaseModel):
             )
         return record
 
+    @property
+    def saved_usd(self) -> float:
+        """What the cache saved: what the cached calls would have cost."""
+        return sum(
+            estimate_cost_usd(call.model, call.input_tokens, call.output_tokens)
+            for call in self.calls
+            if call.cached
+        )
+
+    @property
+    def cached_call_count(self) -> int:
+        return sum(1 for call in self.calls if call.cached)
+
     def breakdown_by_purpose(self) -> dict[str, float]:
         """Where the money went. Usually one step is most of the bill."""
         totals: dict[str, float] = {}
@@ -165,8 +190,9 @@ class CostLedger(BaseModel):
         return dict(sorted(totals.items(), key=lambda item: item[1], reverse=True))
 
     def summary_line(self) -> str:
+        saved = f", saved ${self.saved_usd:.4f} via cache" if self.cached_call_count else ""
         return (
-            f"{len(self.calls)} call(s), {self.total_input_tokens:,} in / "
-            f"{self.total_output_tokens:,} out, ${self.spent_usd:.4f} of "
-            f"${self.limit_usd:.2f}"
+            f"{len(self.calls)} call(s) ({self.cached_call_count} cached), "
+            f"{self.total_input_tokens:,} in / {self.total_output_tokens:,} out, "
+            f"spent ${self.spent_usd:.4f} of ${self.limit_usd:.2f}{saved}"
         )

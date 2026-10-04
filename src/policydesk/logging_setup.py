@@ -113,6 +113,13 @@ def make_redactor(known_secrets: list[str]):
     return redactor
 
 
+# Libraries that log every HTTP request at INFO level. Those lines contain full
+# request URLs, which is both noisy and a quiet way for data to reach your logs.
+# We raise their level rather than relying on the redactor to catch it: not
+# logging something is always safer than logging it and cleaning it up.
+NOISY_LIBRARY_LOGGERS = ("httpx", "httpcore", "openai", "chromadb", "urllib3")
+
+
 def configure_logging(settings: Settings) -> None:
     """Set up logging for the whole process. Call this once, at startup."""
     logging.basicConfig(
@@ -121,6 +128,9 @@ def configure_logging(settings: Settings) -> None:
         level=getattr(logging, settings.log_level),
         force=True,  # replace any handler a library installed behind our back
     )
+
+    for name in NOISY_LIBRARY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
 
     renderer: Any = (
         structlog.processors.JSONRenderer()

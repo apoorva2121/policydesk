@@ -45,8 +45,9 @@ Every other term is in `docs/GLOSSARY.md`.
 | --- | --- |
 | 0. Project skeleton, config, secrets, logging, tests | **done** |
 | 1. Sample data + PDF/Excel extraction | **done** |
-| 2. Plain RAG baseline | next |
-| 3–10 | see `docs/PLAN.md` |
+| 2. Plain RAG baseline (chunking, embeddings, citations, refusal) | **done** |
+| 3. Tools and text-to-SQL | next |
+| 4–10 | see `docs/PLAN.md` |
 
 ## Setup from a clean machine
 
@@ -89,6 +90,11 @@ $env:APP_ENV="test"
 | See what extraction produced | `.venv\Scripts\python.exe -m policydesk.cli extract` |
 | Look inside the database | `.venv\Scripts\python.exe -m policydesk.cli inspect-db` |
 | Estimate the project's model cost | `.venv\Scripts\python.exe -m policydesk.cli cost` |
+| See how documents were chunked (free) | `.venv\Scripts\python.exe -m policydesk.cli chunks` |
+| Build the vector index | `.venv\Scripts\python.exe -m policydesk.cli index` |
+| Ask a question | `.venv\Scripts\python.exe -m policydesk.cli ask "your question"` |
+| Ask, showing retrieved chunks | `... ask "your question" --show-chunks` |
+| Clear the model response cache | `.venv\Scripts\python.exe -m policydesk.cli cache-clear` |
 | Run tests | `.venv\Scripts\python.exe -m pytest` |
 | Lint | `.venv\Scripts\python.exe -m ruff check .` |
 | Auto-format | `.venv\Scripts\python.exe -m ruff format .` |

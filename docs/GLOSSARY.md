@@ -109,3 +109,42 @@ Mistaking that for zero produces a confident wrong answer.
 **Deterministic** -- same input, same output, every time. Our sample data is
 deterministic on purpose: an evaluation score you cannot reproduce is not a
 measurement.
+
+
+## Retrieval and cost (Milestone 2)
+
+**Chunk strategy** -- how a document is cut up. `section` splits at headings so one
+chunk is one complete rule; `fixed` splits every N characters with overlap.
+
+**Overlap** -- repeating the last few characters of one chunk at the start of the
+next, so a sentence cut in half still appears whole somewhere.
+
+**Contextual header** -- a short label (document, page, section) added to a chunk
+*before embedding*, so a short chunk is distinctive. It is not shown to the user.
+
+**Cosine distance / similarity** -- how we measure "close in meaning". Distance 0
+means identical direction; we report similarity as 1 minus the distance.
+
+**top_k** -- how many chunks retrieval returns. Too few and you miss the answer;
+too many and you pay for irrelevant text and invite the model to be distracted.
+
+**Manifest (index)** -- a small record of how an index was built: embedding model,
+chunk strategy, sizes. Checked on load, because querying an index built with a
+different embedding model returns confident nonsense without any error.
+
+**Response cache** -- storing a model's reply on disk, keyed by a hash of the exact
+request, so identical repeats are free and instant.
+
+**Token pre-check** -- counting tokens locally before sending a request, so an
+oversized prompt is refused instead of paid for.
+
+**Refusal token** -- an exact string the model emits when the evidence is missing
+(`INSUFFICIENT_EVIDENCE`), so our code can detect a refusal reliably.
+
+**Grounded vs cited** -- grounded means the claim really is supported by the
+retrieved text; cited means the answer points at a source. A system can cite
+without being grounded, which is why Milestone 4 adds a verification step.
+
+**Prompt injection** -- text inside a retrieved document that tries to give the
+model instructions. Telling the model to ignore it helps but is **not** a security
+boundary.

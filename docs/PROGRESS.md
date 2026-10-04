@@ -176,3 +176,143 @@ Milestone 2 — the plain RAG baseline: chunking, embeddings, Chroma, retrieval,
 a grounded answer with citations, an explicit "I do not know", and a chunk
 inspector so you can see *why* a chunk was selected. This is the first milestone
 that needs the OpenAI key in `.env`.
+
+
+---
+
+## 2026-10-04 — Milestone 2: plain RAG baseline, and cost control
+
+**Status:** done and verified against the real API.
+
+### The headline result
+
+Four question types, asked against the real system:
+
+| Question | Result | Why |
+| --- | --- | --- |
+| "What is the per-diem limit for international travel?" | **"USD 85 per day for meals [1]"**, cited to `travel-and-expense-policy.pdf (p.1, 2. Meal allowances)` | Plain RAG is enough |
+| "What is our parental leave policy?" | **Honest refusal**: "Parental leave policy information is missing" | Correctly out of scope |
+| "What did Engineering spend on travel in Q3 2026?" | **Refused** — "No information on Engineering's travel expenses" | Needs SQL. The numbers are in the database, which plain RAG cannot reach |
+| "Which of Priya Raman's October expenses break policy?" | **Refused** — "Details of Priya Raman's October expenses are missing" | Needs the PDF limit *and* the SQL rows |
+
+Rows 3 and 4 are the point. The system refused rather than inventing numbers,
+which is the correct behaviour — and it is exactly the gap Milestones 3 and 4
+close. The motivation for building an agent is now a measured fact, not a claim.
+
+### What was built
+
+| File | Purpose |
+| --- | --- |
+| `llm/cache.py` | On-disk response cache keyed by a hash of the complete request |
+| `llm/client.py` | The single door to the API: token pre-check, cache, timeout, bounded retries, cost recording, specific errors |
+| `rag/chunking.py` | Two strategies (`section`, `fixed`); rows and tables never split; contextual headers for embedding |
+| `rag/index.py` | Chroma vector store plus a **manifest** that refuses to open a mismatched index |
+| `rag/retrieve.py` | Ranked results with similarity, and `why_selected` for every one |
+| `rag/answer.py` | Grounded answer with numbered citations, exact refusal token, injection framing |
+| `pipeline.py` | One wiring of the stages, shared by the CLI, tests and later the API |
+| `cli.py` | `chunks`, `index`, `ask --show-chunks`, `cache-clear` |
+| `tests/fakes.py` | A fake client with hash-based embeddings, so tests are free and offline |
+| `tests/test_chunking.py`, `tests/test_rag.py` | 35 new tests |
+
+### Verification (actually run)
+
+- `pytest` → **77 passed**; `ruff check .` → All checks passed
+- Smoke test of the real key: embeddings 1536d, chat replied — **$0.0000028**
+- `policydesk index` → 25 chunks, 1,938 tokens, **$0.00004**
+- Four `ask` runs → about **$0.0001 each**
+- Re-asking an identical question → **$0.0000, 100% cache hit rate**
+
+Total real spend for the whole of Milestone 2: **under one cent.**
+
+### Chunking: the decision, and the numbers behind it
+
+Both strategies are implemented so the choice can be measured in Milestone 7
+rather than argued about. Measured on this corpus:
+
+| Strategy | Chunks | Median size | Largest | Chunks with a section label |
+| --- | --- | --- | --- | --- |
+| `section` (default) | 25 | 212 chars | 560 | 12 |
+| `fixed` (900/150) | 17 | 212 chars | 877 | 0 |
+
+`section` was chosen as the default because one chunk is one complete rule. The
+meal rule holds *both* the domestic USD 60 and the international USD 85 figure;
+a fixed split can separate them, and then a question about one retrieves a chunk
+that does not contain the other. There is a test asserting they stay together.
+
+### A real bug found and fixed on the way
+
+The Milestone 1 extractor joined every line of a page into a single paragraph.
+That read fine, but it **destroyed the section headings** — and the chunker needs
+them. Page 1 came back as one 2,000-character blob.
+
+Fix: `_clean()` now starts a new paragraph at every numbered heading and keeps the
+heading on its own line. Page 1 became 11 paragraphs, 5 of them headings.
+
+The lesson generalises: *extraction must preserve the structure that later stages
+depend on*. Information thrown away at ingestion cannot be recovered downstream.
+
+### Decisions and why
+
+1. **One client class for every model call.** Every call needs a timeout, retries,
+   a token count, a cost record and a cache lookup. Five copies of that means one
+   of them is missing a timeout.
+2. **Token count checked locally before sending.** A limit you check after paying
+   is not a limit.
+3. **An on-disk cache, keyed on everything that affects the answer** — model,
+   messages, temperature, max tokens. Miss one field and you serve a stale answer
+   after changing that very setting, then lose an hour to it.
+4. **`temperature=0` everywhere.** Repeatable answers can be cached, compared and
+   evaluated. Random ones cannot.
+5. **Per-text embedding cache, not per-batch.** Add one document and only that one
+   is embedded. Batch-level caching would re-embed everything on any change.
+6. **The index carries a manifest.** An index built with one embedding model and
+   queried with another returns confident nonsense and raises nothing. The
+   manifest turns a silent wrong-answer bug into a clear error. Two tests cover it.
+7. **Rebuild the index rather than update it.** At this size it is nearly free, and
+   it removes the class of bug where deleted documents linger and get cited.
+8. **Chunks are embedded with a context header**, cited without it. A chunk reading
+   "The cap covers all meals..." is ambiguous alone.
+9. **An exact refusal token**, not prose matching. "I do not know whether X, but Y"
+   would fool any pattern match.
+10. **Refuse before calling the model when retrieval is empty.** No evidence means
+    no answer; paying to be told so is waste.
+11. **Library HTTP loggers raised to WARNING.** They log full request URLs at INFO.
+    Not logging something beats logging it and scrubbing it afterwards.
+12. **Invented citations are detectable.** `[9]` when three chunks were supplied
+    means the model fabricated a source; `invalid_citation_numbers` catches it.
+
+### Interview questions this milestone answers
+
+- "Chunk size and overlap — and why?" → strategy per document structure, with the
+  meal-rule example of why a split costs you a correct answer.
+- "How do you make a RAG answer auditable?" → numbered context, parsed citations
+  mapped back to real chunks, invented citation numbers detected.
+- "How do you know whether a wrong answer is a retrieval or a generation bug?" →
+  `--show-chunks` shows what was retrieved, its score and why it matched.
+- "How would you halve this pipeline's cost?" → cache, cheaper model per step,
+  fewer chunks, shorter outputs (output tokens cost 4× input).
+- "What happens if you change the embedding model?" → the manifest refuses to load
+  the index, instead of silently returning nonsense.
+
+### Honest limitations
+
+- **Vector search only.** No keyword (BM25) component yet, so an exact code or
+  rare identifier can be missed. Hybrid search is a later improvement.
+- **No reranking.** The 5th retrieved chunk in the live run scored 0.456 with *no*
+  shared words — it was included only because `top_k=5`. A similarity floor or a
+  reranker would drop it.
+- **Sections spanning a page boundary lose their heading on the continuation**, so
+  "5. Client entertainment" appears as a 139-char chunk on p.1 plus an unlabelled
+  165-char chunk on p.2. Visible in `policydesk chunks`.
+- **The cache does not notice changed documents.** Edit a file, ask the same
+  question, and you get the old answer until `policydesk cache-clear`.
+- **Chroma on local disk is not a production vector store** — no backups, no
+  access control, no concurrent writers.
+- **The prompt's "treat context as data" instruction is not a security boundary.**
+  It reduces injection risk; Milestone 5 adds the real controls.
+
+### Next
+
+Milestone 3 — tools. A read-only text-to-SQL tool over the expense database, so
+the two refused questions above become answerable. Numbers will come from a query,
+never from the model.

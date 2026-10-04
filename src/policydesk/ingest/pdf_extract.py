@@ -27,6 +27,7 @@ job -- that trade-off is noted in the Azure mapping milestone.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pdfplumber
@@ -38,23 +39,59 @@ from .models import ExtractionReport, SourceBlock
 MIN_CHARS_PER_PAGE = 20
 
 
-def _clean(text: str) -> str:
-    """Tidy extracted text without changing its meaning.
+# A numbered section heading, e.g. "2. Meal allowances (per diem)".
+# Matching this is how we keep the document's structure through extraction.
+_HEADING_RE = re.compile(r"^\d+(?:\.\d+)*\.?\s+[A-Z]")
 
-    PDF extraction produces ragged line breaks mid-sentence. We keep paragraph
-    breaks (blank lines) but join single line breaks, so a sentence stays one
-    sentence. We do NOT rewrite words -- extracted text must stay faithful to
-    the source, or citations become lies.
+
+def looks_like_heading(line: str) -> bool:
+    """True for a line like '3. Accommodation'.
+
+    This is a heuristic. A wrapped sentence that happens to begin "5. " would be
+    misread as a heading. In exchange we keep the document's section structure,
+    which is what makes a chunk equal one complete rule later on.
     """
-    lines = [line.strip() for line in text.splitlines()]
-    paragraphs: list[list[str]] = [[]]
-    for line in lines:
-        if line:
-            paragraphs[-1].append(line)
-        elif paragraphs[-1]:
-            paragraphs.append([])
-    joined = [" ".join(group) for group in paragraphs if group]
-    return "\n\n".join(joined).strip()
+    return bool(_HEADING_RE.match(line.strip())) and len(line.strip()) < 100
+
+
+def _clean(text: str) -> str:
+    """Tidy extracted text without losing the structure we need later.
+
+    A PDF gives us one line per *visual* line, with no blank lines between
+    paragraphs. Simply joining every line (which this function used to do)
+    produced one giant paragraph per page and destroyed the headings -- and the
+    chunker needs those headings to keep each policy rule intact.
+
+    So we do two things:
+
+    1. Join wrapped lines inside a paragraph, so a sentence stays one sentence.
+    2. Start a new paragraph at every section heading, and keep that heading on
+       its own line.
+
+    We never rewrite words. Extracted text must stay faithful to the source, or
+    citations become lies.
+    """
+    paragraphs: list[list[str]] = []
+    current: list[str] = []
+
+    def flush() -> None:
+        if current:
+            paragraphs.append(current.copy())
+            current.clear()
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            flush()
+            continue
+        if looks_like_heading(line):
+            flush()
+            paragraphs.append([line])  # the heading is its own paragraph
+            continue
+        current.append(line)
+    flush()
+
+    return "\n\n".join(" ".join(group) for group in paragraphs).strip()
 
 
 def _table_to_text(table: list[list[str | None]]) -> str:

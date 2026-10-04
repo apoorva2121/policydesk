@@ -52,19 +52,36 @@ class Settings(BaseSettings):
     # ends up in a log line or an error message, you see "**********".
     openai_api_key: SecretStr | None = None
 
-    chat_model: str = "gpt-4o-mini"  # cheap: routing, grading
-    synthesis_model: str = "gpt-4o"  # stronger: final answers, judging
+    # Cheap models everywhere by default. Change one line to test a stronger one
+    # -- and then measure whether it actually answers better. Do not assume.
+    chat_model: str = "gpt-4o-mini"  # routing, grading, writing SQL
+    answer_model: str = "gpt-4o-mini"  # composing the final answer
+    # The judge is a different model family on purpose, so that it does not share
+    # the generator's blind spots. Used only by the evaluation milestone.
+    judge_model: str = "gpt-5-mini"
     embedding_model: str = "text-embedding-3-small"
     embedding_backend: Literal["provider", "local"] = "provider"
+
+    # Cache identical model calls on disk. The biggest saving while learning.
+    llm_cache_enabled: bool = True
 
     # ---------- Safety and cost limits ----------
     # These are enforced in later milestones, but they are declared now so that
     # there is exactly one place to change them.
     max_input_chars: int = Field(default=4000, ge=100, le=100_000)
+    # Checked locally BEFORE a call is sent, so a runaway prompt costs nothing.
+    max_prompt_tokens: int = Field(default=12_000, ge=500, le=200_000)
     retrieval_top_k: int = Field(default=5, ge=1, le=50)
     max_graph_loops: int = Field(default=2, ge=0, le=5)
     request_timeout_s: float = Field(default=30.0, gt=0, le=300)
     sql_row_limit: int = Field(default=200, ge=1, le=10_000)
+
+    # --- Chunking (Milestone 2) ---
+    # "section"  : split on the policy's numbered headings -> a chunk is a whole rule
+    # "fixed"    : split every N characters with overlap -> even sizes, rules can split
+    chunk_strategy: Literal["section", "fixed"] = "section"
+    chunk_size_chars: int = Field(default=900, ge=200, le=8_000)
+    chunk_overlap_chars: int = Field(default=150, ge=0, le=2_000)
     # A seatbelt, not a guarantee: it only stops calls that go through our
     # CostLedger. The hard limit is the usage cap set in the OpenAI dashboard.
     max_spend_usd_per_run: float = Field(default=1.00, gt=0, le=1_000)
@@ -107,6 +124,16 @@ class Settings(BaseSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def _overlap_must_be_smaller_than_chunk(self) -> Settings:
+        if self.chunk_overlap_chars >= self.chunk_size_chars:
+            raise ValueError(
+                f"CHUNK_OVERLAP_CHARS ({self.chunk_overlap_chars}) must be smaller than "
+                f"CHUNK_SIZE_CHARS ({self.chunk_size_chars}). Equal or larger overlap makes "
+                "the splitter loop forever."
+            )
+        return self
+
     def safe_summary(self) -> dict[str, object]:
         """A view of the config that is safe to print or log.
 
@@ -123,13 +150,19 @@ class Settings(BaseSettings):
             "llm_provider": self.llm_provider,
             "openai_api_key": flag(self.openai_api_key),
             "chat_model": self.chat_model,
-            "synthesis_model": self.synthesis_model,
+            "answer_model": self.answer_model,
+            "judge_model": self.judge_model,
+            "llm_cache_enabled": self.llm_cache_enabled,
             "embedding_model": self.embedding_model,
             "embedding_backend": self.embedding_backend,
             "retrieval_top_k": self.retrieval_top_k,
             "max_graph_loops": self.max_graph_loops,
             "max_input_chars": self.max_input_chars,
             "sql_row_limit": self.sql_row_limit,
+            "max_prompt_tokens": self.max_prompt_tokens,
+            "chunk_strategy": self.chunk_strategy,
+            "chunk_size_chars": self.chunk_size_chars,
+            "chunk_overlap_chars": self.chunk_overlap_chars,
             "max_spend_usd_per_run": self.max_spend_usd_per_run,
             "request_timeout_s": self.request_timeout_s,
             "data_dir": str(self.data_dir),

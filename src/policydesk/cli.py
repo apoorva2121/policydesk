@@ -7,6 +7,10 @@ generate-data  build the sample policy PDFs, spreadsheet and database
 extract        read the sample files and show what came out, with locations
 inspect-db     show the database tables and a couple of example queries
 cost           estimate what the whole project will cost in model usage
+chunks         show how the documents were split into chunks (free)
+index          embed the chunks and build the vector index
+ask            ask a question over the indexed documents
+cache-clear    delete all cached model responses
 
 Every command is read-only with respect to your settings, prints what it did,
 and returns a process exit code (0 = fine). That last part matters: a command
@@ -302,6 +306,180 @@ def cmd_cost() -> int:
 
 
 # ---------------------------------------------------------------------------
+# chunks, index, ask, cache-clear  (Milestone 2)
+# ---------------------------------------------------------------------------
+
+
+def cmd_chunks(show: int) -> int:
+    """Show how the documents were cut up. Makes no model calls, so it is free."""
+    from .pipeline import build_chunks
+    from .rag import chunk_stats
+
+    settings = _load_settings_or_explain()
+    if settings is None:
+        return 1
+
+    chunks, reports = build_chunks(settings)
+    if not chunks:
+        print("No chunks. Run 'policydesk generate-data' first.", file=sys.stderr)
+        return 1
+
+    stats = chunk_stats(chunks)
+    print(
+        f"Chunking strategy: {settings.chunk_strategy} "
+        f"(size={settings.chunk_size_chars}, overlap={settings.chunk_overlap_chars})"
+    )
+    print("-" * 78)
+    print(f"  chunks                      {stats['count']}")
+    print(f"  total characters            {stats['total_chars']:,}")
+    print(
+        f"  smallest / median / largest {stats['smallest']} / {stats['median']} / "
+        f"{stats['largest']} chars"
+    )
+    print(f"  with a section heading      {stats['with_section']} of {stats['count']}")
+    print()
+
+    for chunk in chunks[:show]:
+        preview = " ".join(chunk.text.split())
+        if len(preview) > 110:
+            preview = preview[:110] + "..."
+        print(f"  {chunk.char_count:>4}ch  [{chunk.kind}]  {chunk.citation}")
+        print(f"          {preview}")
+
+    hidden = len(chunks) - min(show, len(chunks))
+    if hidden > 0:
+        print(f"\n  ... {hidden} more (use --show {len(chunks)} to see all)")
+
+    flagged = [report for report in reports if report.needs_human_review]
+    if flagged:
+        print(
+            f"\n  note: {len(flagged)} source file(s) still need human review "
+            "(run 'policydesk extract' for the detail)"
+        )
+    return 0
+
+
+def cmd_index() -> int:
+    """Embed every chunk and write the vector index. This one spends money."""
+    from .pipeline import make_client, reindex
+
+    settings = _load_settings_or_explain()
+    if settings is None:
+        return 1
+
+    configure_logging(settings)
+    try:
+        llm = make_client(settings)
+    except Exception as exc:  # noqa: BLE001 - show the reason, not a traceback
+        print(f"Could not start the model client: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        f"Building the index with {settings.embedding_model} "
+        f"(strategy={settings.chunk_strategy})..."
+    )
+    try:
+        count, _ = reindex(settings, llm)
+    except Exception as exc:  # noqa: BLE001
+        print(f"Index build failed: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"Indexed {count} chunks.")
+    print(f"Usage: {llm.usage_summary()}")
+    print(f"Index written to {settings.vector_store_dir}")
+    print()
+    print('Next:  policydesk ask "What is the per-diem limit for international travel?"')
+    return 0
+
+
+def cmd_ask(question: str, show_chunks: bool) -> int:
+    """Ask one question over the indexed documents."""
+    from .pipeline import ask, make_client
+    from .rag import IndexMismatch
+
+    settings = _load_settings_or_explain()
+    if settings is None:
+        return 1
+
+    configure_logging(settings)
+    if len(question) > settings.max_input_chars:
+        print(
+            f"Question is {len(question)} characters, over the {settings.max_input_chars} limit.",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        llm = make_client(settings)
+        result = ask(question, settings, llm)
+    except IndexMismatch as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        print(f"Failed: {exc}", file=sys.stderr)
+        return 1
+
+    answer = result.answer
+
+    print()
+    print(f"Q: {question}")
+    print("=" * 78)
+    if answer.refused:
+        print("ANSWER: I do not know.")
+        print(f"        Missing: {answer.missing}")
+    else:
+        print(answer.text)
+
+    if answer.citations:
+        print()
+        print("Sources used:")
+        for number, citation in zip(answer.cited_numbers, answer.citations, strict=False):
+            print(f"  [{number}] {citation}")
+    elif not answer.refused:
+        print()
+        print("  WARNING: the answer cited nothing. Treat it as unverified.")
+
+    if answer.invalid_citation_numbers:
+        print()
+        print(
+            f"  WARNING: cited chunks that do not exist: {answer.invalid_citation_numbers}. "
+            "The model invented a source."
+        )
+
+    if show_chunks:
+        print()
+        print("-" * 78)
+        print("RETRIEVED CHUNKS (everything the model was allowed to read)")
+        for chunk in answer.chunks:
+            used = "USED" if chunk.rank in answer.cited_numbers else "    "
+            body = " ".join(chunk.text.split())
+            print()
+            print(f"  [{chunk.rank}] {used}  {chunk.citation}")
+            print(f"       {chunk.why_selected}")
+            print(f"       {body[:150]}{'...' if len(body) > 150 else ''}")
+
+    print()
+    print("-" * 78)
+    print(f"Usage: {result.usage}")
+    return 0
+
+
+def cmd_cache_clear() -> int:
+    """Delete every cached model response."""
+    from .llm.cache import ResponseCache
+
+    settings = _load_settings_or_explain()
+    if settings is None:
+        return 1
+
+    cache = ResponseCache(settings.data_dir / "processed" / "llm-cache", enabled=True)
+    removed = cache.clear()
+    print(f"Removed {removed} cached response(s).")
+    print("The next run will call the API again and cost real money.")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # wiring
 # ---------------------------------------------------------------------------
 
@@ -323,6 +501,24 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("inspect-db", help="show the database contents and example queries")
     sub.add_parser("cost", help="estimate the model cost of the whole project")
 
+    chunks_parser = sub.add_parser("chunks", help="show how documents were split (free)")
+    chunks_parser.add_argument(
+        "--show",
+        type=int,
+        default=8,
+        metavar="N",
+        help="how many chunks to preview (default 8)",
+    )
+    sub.add_parser("index", help="embed the chunks and build the vector index")
+    ask_parser = sub.add_parser("ask", help="ask a question over the indexed documents")
+    ask_parser.add_argument("question", help="the question, in quotes")
+    ask_parser.add_argument(
+        "--show-chunks",
+        action="store_true",
+        help="also print the retrieved chunks and why each one matched",
+    )
+    sub.add_parser("cache-clear", help="delete all cached model responses")
+
     args = parser.parse_args(argv)
 
     if args.command == "doctor":
@@ -335,6 +531,14 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_inspect_db()
     if args.command == "cost":
         return cmd_cost()
+    if args.command == "chunks":
+        return cmd_chunks(show=args.show)
+    if args.command == "index":
+        return cmd_index()
+    if args.command == "ask":
+        return cmd_ask(args.question, show_chunks=args.show_chunks)
+    if args.command == "cache-clear":
+        return cmd_cache_clear()
 
     parser.error(f"unknown command: {args.command}")
     return 2
