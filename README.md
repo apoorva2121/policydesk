@@ -152,3 +152,8 @@ production-ready.
 - The Docker image build has not been verified locally.
 
 The full list is in `docs/DEPLOYMENT.md`, ordered by how soon it would hurt.
+
+## Licence
+
+[MIT](LICENSE). The policy PDFs and expense database in this repository describe a
+fictional company and contain no real data.
